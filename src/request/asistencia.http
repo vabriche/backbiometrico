@@ -1,0 +1,66 @@
+//@uri= http://200.12.136.74:4000/biometrico/
+@uri= http://localhost:4000/biometrico/
+
+
+###
+GET {{uri}}agente_leg/19220
+
+###
+POST {{uri}}login
+Content-Type: application/json
+
+{
+    "legajo":"28367",
+    "passw":"1233"
+
+}
+###
+GET {{uri}}activos
+###
+GET {{uri}}resetpass/28367/12663280
+###
+GET {{uri}}getausentes/2023-06-09
+###
+GET {{uri}}horario_claustrofechas/0/2023-02-27/2023-02-27
+
+###
+GET {{uri}}diasregistrados/0/19220/2022-10-20/2022-10-20
+
+###
+GET {{uri}}horario_persofechas/0/19220/2023-03-02/2023-03-02
+
+###
+GET {{uri}}inasistenciasF/28367/2022-10-01/2022-11-27
+###
+POST {{uri}}newhorario
+Content-Type: application/json
+
+    {
+        "condi":"0",
+        "legajo":"28367",
+        "fecha":"2022-10-22",
+        "hora":"09:00"
+    }
+
+###
+PUT {{uri}}registrosalida/0/28367/197843
+Content-Type: application/json
+
+    {
+        "horastr":"2.85",
+        "hora":"10:53"
+    }
+
+
+###
+PUT {{uri}}acreditarhoras/28367/194040
+
+###
+GET {{uri}}licenciasHist/28367
+
+
+###
+GET {{uri}}asistenciaUpdate/19220/198564/06:56/12:58
+
+###
+GET {{uri}}getpersofce/12663280

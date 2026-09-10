@@ -1,0 +1,245 @@
+@uri= http://localhost:4000/cargos/
+
+###
+GET {{uri}}cargosinterinos
+
+###
+GET {{uri}}ingreanioagentes/2019/2
+###
+GET {{uri}}cumpleEdad/65
+
+###
+GET {{uri}}datosVaca/28367
+
+###
+
+GET {{uri}}inasistenciasagente/34909
+
+###
+POST {{uri}}cargarinasistencia
+Content-Type: application/json
+
+  {
+       "legajo": "28367",
+        "ncargo": "3",
+        "motivo": "04",
+        "nr": "1",
+        "fechaini": "2022-06-20",
+        "fechafin": "2022-06-21",
+        "nrores": "2ºy3° 2020"
+    }
+
+###
+GET {{uri}}/licenciasagente/99901
+
+###
+DELETE {{uri}}/dellicencia/5282/99901
+
+###
+PUT {{uri}}/darBajaLicencia/5289/99901
+Content-Type: application/json
+
+{
+  
+  "nresl":"99999768",
+  "fechal":"2024-09-01"
+
+}
+
+###
+POST {{uri}}cargarlicencia
+Content-Type: application/json
+
+{
+        "legajo": "28367",
+        "ncargo": "3",
+        "motivo": "01",
+        "nr": "CG",
+        "fechaini": "2023-06-20",
+        "fechafin": "2023-12-21",
+        "nrores": "2020/2020-D",
+        "ncgen" :"5"
+}
+###
+PUT {{uri}}modiADatosEst/5
+Content-Type: application/json
+
+{
+   "tipotitulo": 3,
+  "estado": 2,
+  "titulo": 5,
+  "institucion": 1,
+  "establecimiento": 1,
+  "adicional": 2
+}
+
+
+###
+POST {{uri}}addADatosEst
+Content-Type: application/json
+
+{
+  "adicional": "1",
+  "establecimiento":"3",
+  "estado": "1",
+  "institucion": "1",
+  "legajo":"28367",
+  "tipotitulo": "3",
+  "titulo": "7"
+}
+###
+GET {{uri}}estudios/22941
+###
+DELETE {{uri}}delinasistencia/187/34909
+
+###
+POST {{uri}}addAgente
+Content-Type: application/json
+
+{
+  "legajo":"40123",
+  "tipodoc":"1",
+  "nrodoc":"16640960",
+  "nombre":"IWANOW, Patricia",
+  "claustro":"1",
+  "nrocuil":"27166409603",
+  "area":"Docente"
+}
+
+###
+POST {{uri}}addADatosCont
+Content-Type: application/json
+
+{
+"legajo":"55505",
+"cp":"5546",
+"domicilio":"las marias 2345",
+"emailinstitucional":"sraprueba@huerta.com",
+"emailpersonal":"jmprueba@gilmail.com",
+"localidad":"2",
+"telefonoCelular":"43344444",
+"telefonoFijo":"22222222",
+"telefonocontacto":"44444433"
+}
+
+###
+GET {{uri}}datosAgente/28367
+###
+GET {{uri}}getcargosp/2/21
+
+###
+GET {{uri}}lastnrocargos/28368
+###
+GET {{uri}}datosFamiliaAgente/28367
+###
+GET {{uri}}datosDomiContactoAgente/28367
+###
+GET {{uri}}datosAntiguedadAgente/28367
+
+###
+POST {{uri}}addCargo
+Content-Type: application/json
+
+{
+  "legajo":"28367",
+  "ncargo":"4",
+  "sede":"1",
+  "tcargo":"3",
+  "claustro":"1",
+  "ppal":"37",
+   "nivel":"09",
+   "adic":"",
+  "plan":"4",
+  "codmat":"143",
+  "fechaA":"2023-03-01",
+  "nroresA":"2023/22 D.",
+  "fechaB":"2023-12-31",
+  "ncg":"9",
+  "titu":"0",
+  "car":"4",
+  "rempl":"9999" 
+}
+
+###
+PUT  {{uri}}modiCargo/1460
+Content-Type: application/json
+
+{
+   "ca":"2",
+   "ppal":"37",
+   "nv":"12",
+  "rempla":"21345",
+  "fechalt":"2023-03-11",
+  "nresa":"2023/100GR",
+  "fechbaj":"2023-12-31",
+  "titular":"0"
+   
+}
+
+
+
+###
+GET {{uri}}bajacargo/1021/28367/9/0
+
+###
+POST {{uri}}addInstitucion
+Content-Type: application/json
+
+{
+  "codigoI":"UNSL",
+  "nombre":"UNIVERSIDAD NACIONAL DE SAN LUIS"
+
+}
+
+###
+POST {{uri}}addEstablecimiento
+Content-Type: application/json
+
+{
+  "institucion":"8",
+  "nombre":"FACULTAD DE CIENCIAS FISICO MATEMATICAS Y NATURALES"
+}
+
+###
+POST {{uri}}addTitulo
+Content-Type: application/json
+
+{
+  "nombre":"LICENCIADO EN CIENCIAS MATEMATICAS"
+}
+
+
+###
+PUT {{uri}}modiInstitucion/8
+Content-Type: application/json
+
+{
+  "codigoI":"UNSL",
+  "nombre":"UNIVERSIDAD NACIONAL DE SAN LUIS"
+
+}
+
+###
+PUT {{uri}}modiEstablecimiento/11
+Content-Type: application/json
+
+{
+  
+  "nombre":"FACULTAD DE CIENCIAS FISICO MATEMATICAS Y NATURALES"
+}
+
+###
+PUT {{uri}}modiTitulo/13
+Content-Type: application/json
+
+{
+  "nombre":"INGENIERO EN ALIMENTOS"
+}
+###
+DELETE {{uri}}delTitulo/9
+
+###
+DELETE {{uri}}delEstablecimiento/7
+
+###
+DELETE {{uri}}delInstitucion/3

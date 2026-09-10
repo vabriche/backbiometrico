@@ -1,0 +1,52 @@
+@uri= http://localhost:4000/hcd/
+GET {{uri}}materias/1/1
+###
+GET {{uri}}docentes/B
+###
+GET {{uri}}consultam/1/003/4/4236
+
+###
+GET {{uri}}compocatedra/1/4/3142/C
+
+### 
+POST {{uri}}add_horario
+Content-Type: application/json
+
+{
+    "legdoc": "28367",
+    "materia": "4124",
+    "sede" : "4",
+    "carrera":"008",
+    "plan":"4",
+    "catedra":"U",
+    "lunes_c":"10:20 a 13:56",
+    "martes_c":"",
+    "miercoles_c":"",
+    "jueves_c":"",
+    "viernes_c":"",
+    "sabado_c":"",
+    "lugar_c":"la casita de bambino",
+    "lugar_v":"fce.uncu.edu.casa.iwanow",
+    "fecha_i":"2024-10-09"
+}
+
+
+###
+PUT {{uri}}baja_horario/4342
+content-type: application/json
+
+{
+    "vigente":"N",
+    "f_fin":"2024-06-23"
+}
+
+###
+
+PUT {{uri}}modiHora/4342
+content-type: application/json
+
+{ 
+    "lunes":"10:00 a 22:00",
+   "lugar_c":"parque fgral san martin",
+    "lugar_v":"fce.mendoza.com"
+}
