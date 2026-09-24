@@ -16,6 +16,8 @@ import {
   deleteTitulo,
   getAdicionalesAgente,
   getAgentescumpleEdad,
+  getAgentesCumplenEdades,
+  getResumenInicio,
   getAntiguedadAgente,
   getCargosHistoricosAgentes,
   getCargosPlanta,
@@ -97,7 +99,7 @@ router.put("/modiADatosCont/:legajo", modiDatosAgentesContacto);
 //cargos
 router.post("/addCargo", createCargoNuevo);
 router.put("/bajacargo/:nroreg/:legajo", darBajaCargo);
-router.get("/bajacargohistorico/:legajo/:nroreg", darBajaCargoHistorico);
+router.put("/bajacargohistorico/:legajo/:nroreg", darBajaCargoHistorico);
 router.post("/addcargoH", createCargoNuevoHist);
 router.put("/modiCargo/:nroreg", updateCargo);
 router.put("/modiCargoh/:nroreg", updateCargoH);
@@ -130,6 +132,8 @@ router.delete("/deladicional/:id/:legajo", deleteAdicional);
 //utiles
 router.get("/ingreanioagentes/:anioI/:lugarI", getIngresoAñoAgentes);
 router.get("/cumpleEdad/:edad", getAgentescumpleEdad);
+router.get("/cumplenEdades", getAgentesCumplenEdades);
+router.get("/resumenInicio", getResumenInicio);
 router.get("/traerloc", getLugarNac);
 //estudios
 router.get("/estudios/:legajo", getEstudiosAgente);

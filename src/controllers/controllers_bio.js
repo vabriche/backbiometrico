@@ -1,8 +1,34 @@
 import { connect } from '../database.js';
+import bcrypt from 'bcrypt';
+import crypto from 'node:crypto';
 
 import { validarFormatoHora, calcularHorasSeguro, sanitizarLegajo } from "../utils/validaciones.js";
 import { createToken } from "../config/jw.config.js";
 import { getFirebaseAuth } from "../config/firebaseAdmin.config.js";
+
+const BCRYPT_SALT_ROUNDS = 10;
+const esHashBcrypt = (hash) => typeof hash === 'string' && /^\$2[aby]\$/.test(hash);
+
+// Verifica la contraseña ingresada contra el hash guardado en `agentes.passuser`.
+// Soporta la migración progresiva de MD5 (esquema viejo) a bcrypt: si el hash
+// guardado todavía es MD5 y la contraseña coincide, se re-hashea con bcrypt en
+// el momento (no se puede convertir un MD5 existente a bcrypt sin la
+// contraseña en texto plano, así que la migración es por-login, no masiva).
+const verificarYMigrarPassword = async (db, legajo, passwordIngresada, hashGuardado) => {
+    if (esHashBcrypt(hashGuardado)) {
+        return bcrypt.compare(passwordIngresada, hashGuardado);
+    }
+
+    const md5Ingresada = crypto.createHash('md5').update(passwordIngresada).digest('hex');
+    const coincide = md5Ingresada === hashGuardado;
+
+    if (coincide) {
+        const nuevoHash = await bcrypt.hash(passwordIngresada, BCRYPT_SALT_ROUNDS);
+        await db.query('UPDATE agentes SET passuser = ? WHERE legajo = ?', [nuevoHash, legajo]);
+    }
+
+    return coincide;
+};
 
 //funcion prueba agentes_all
 //devuel
@@ -41,9 +67,6 @@ export const getAgenteApp = async (req, res) => {
             res.status(404).json({ message: 'Agente no encontrado' });
         }
 
-        // Cerrar la conexión a la base de datos
-        await db.end();
-
     } catch (error) {
         console.error('Error al obtener el agente:', error); // Log para debugging
         res.status(500).json({ message: 'Error del servidor al obtener el agente' });
@@ -61,6 +84,7 @@ export const getAgente = async (req, res) => {
         res.send(row);
     } catch (e) {
         console.log(e)
+        res.status(500).json({ error: 'Error al consultar el agente' })
     }
 }
 
@@ -81,17 +105,35 @@ export const getAgenteLogin = async (req, res) => {
 
     const { legajo, passw } = req.body
     try {
-        const strqry = `SELECT count(*) as existe,legajo, nrodocumento,apellido,condicion,area,encargado_area FROM agentes WHERE legajo = ? AND passuser = MD5(?)`
+        const strqry = `SELECT legajo, nrodocumento, apellido, condicion, area, encargado_area, passuser FROM agentes WHERE legajo = ?`
         const db = await connect()
-        const [row] = await db.query(strqry, [legajo, passw])
-        if (row[0].existe > 0) {
-            row[0].token = createToken({
-                legajo: row[0].legajo,
-                condicion: row[0].condicion,
-                encargado_area: row[0].encargado_area,
+        const [rows] = await db.query(strqry, [legajo])
+
+        const agente = rows[0]
+        const claveValida = agente ? await verificarYMigrarPassword(db, legajo, passw, agente.passuser) : false
+
+        // Igual que la consulta vieja (WHERE legajo=? AND passuser=MD5(?)): si la
+        // clave no es válida, no se revela ningún dato del agente, aunque el
+        // legajo exista.
+        const respuesta = {
+            existe: claveValida ? 1 : 0,
+            legajo: claveValida ? agente.legajo : null,
+            nrodocumento: claveValida ? agente.nrodocumento : null,
+            apellido: claveValida ? agente.apellido : null,
+            condicion: claveValida ? agente.condicion : null,
+            area: claveValida ? agente.area : null,
+            encargado_area: claveValida ? agente.encargado_area : null,
+        }
+
+        if (claveValida) {
+            respuesta.token = createToken({
+                legajo: agente.legajo,
+                condicion: agente.condicion,
+                encargado_area: agente.encargado_area,
             })
         }
-        res.send(row)
+
+        res.send([respuesta])
     } catch (error) {
         res.send('error')
     }
@@ -147,13 +189,25 @@ export const getAgenteFirebaseLogin = async (req, res) => {
 export const changePassAgente = async (req, res) => {
 
     const { legajo, passwold, passnew } = req.body
-    const strUp = 'UPDATE agentes SET passuser = MD5(?) WHERE passuser = MD5(?) AND legajo = ?'
     try {
         const db = await connect()
-        const [row] = await db.query(strUp, [passnew, passwold, legajo])
-        res.send(row)
+        const [rows] = await db.query('SELECT passuser FROM agentes WHERE legajo = ?', [legajo])
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Agente no encontrado' })
+        }
+
+        const claveActualValida = await verificarYMigrarPassword(db, legajo, passwold, rows[0].passuser)
+        if (!claveActualValida) {
+            return res.status(401).json({ error: 'La contraseña actual no es correcta' })
+        }
+
+        const nuevoHash = await bcrypt.hash(passnew, BCRYPT_SALT_ROUNDS)
+        const [resu] = await db.query('UPDATE agentes SET passuser = ? WHERE legajo = ?', [nuevoHash, legajo])
+        res.send(resu)
     } catch (e) {
         console.log(e)
+        res.status(500).json({ error: 'Error al cambiar la contraseña' })
     }
 
 }
@@ -404,9 +458,6 @@ export const getLicenciasHistoricas = async (req, res) => {
     } catch (error) {
         console.error('Error al ejecutar la consulta:', error);
         res.status(500).json({ message: 'Error interno del servidor.' });
-    } finally {
-        // Aseguramos cerrar la conexión a la base de datos
-        if (db && db.end) db.end();
     }
 };
 
@@ -1200,27 +1251,50 @@ export const getAsistenciadia = async (req, res) => {
 
 
 
-/*
+// Resetea la password al nro. de documento del agente (flujo "olvidé mi
+// contraseña"), valida legajo+documento contra la BD, y devuelve el mismo
+// formato que getAgenteLogin (incluido el JWT) para poder loguear al agente
+// directo tras el reset.
 export const resetPassAgente = async (req, res) => {
 
     const { legajo, documento } = req.body
-    let verdao = await existeagente(legajo, documento)
-    console.log(verdao)
-    if (verdao > 0) {
-        let strUp = `UPDATE agentes SET passuser=MD5(${documento}) WHERE legajo=${legajo}`
-        try {
+    try {
+        const verdao = await existeagente(legajo, documento)
+        if (verdao > 0) {
             const db = await connect()
-            const [row] = await db.query(strUp)
-            res.send(row)
-        } catch (e) {
-            console.log(e)
+            const nuevoHash = await bcrypt.hash(String(documento), BCRYPT_SALT_ROUNDS)
+            await db.query('UPDATE agentes SET passuser = ? WHERE legajo = ?', [nuevoHash, legajo])
+
+            const [rows] = await db.query(
+                'SELECT legajo, nrodocumento, apellido, condicion, area, encargado_area FROM agentes WHERE legajo = ?',
+                [legajo]
+            )
+            const agente = rows[0]
+            const token = createToken({
+                legajo: agente.legajo,
+                condicion: agente.condicion,
+                encargado_area: agente.encargado_area,
+            })
+
+            res.send({
+                existe: 1,
+                legajo: agente.legajo,
+                nrodocumento: agente.nrodocumento,
+                apellido: agente.apellido,
+                condicion: agente.condicion,
+                area: agente.area,
+                encargado_area: agente.encargado_area,
+                token,
+            })
+        } else {
+            res.send('N')
         }
-    } else {
-        res.send('N')
+    } catch (e) {
+        console.log(e)
+        res.status(500).send('N')
     }
 
 }
-*/
 
 
 export const traerControlAsistenciaPersonal = async (req, res) => {

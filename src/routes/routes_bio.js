@@ -28,7 +28,7 @@ import {
   getAgenteApp,
   getLicenciasHistoricas,
   traerControlAsistenciaPersonal,
-  //resetPassAgente,
+  resetPassAgente,
 } from "../controllers/controllers_bio.js";
 
 import { Router } from "express";
@@ -61,8 +61,8 @@ router.get("/reporteasistenciadia/",traerControlAsistenciaPersonal)
 //login: ver POST /biometrico/login en app.js (ruta pública, sin JWT)
 //router.get('/asistenciaUpdate/:leg/:nror/:he/:hs', updateAsistencia)
 
-//router.post('/changepass', changePassAgente)
-//router.post("/resetpass", resetPassAgente);
+router.post('/changepass', changePassAgente)
+router.post("/resetpass", resetPassAgente);
 router.get(
   "/diasregistrados/:condi/:leg/:fecha_i/:fecha_f",
   getDias_Persona_fechas

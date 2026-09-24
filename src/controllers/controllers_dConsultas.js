@@ -56,14 +56,12 @@ export const getCoutTiposCargosDND = async (req, res) => {
     order by c.ca`;
 
     try {
-        const db = await connect();  // Asegúrate de que `connect` sea una función que retorna una conexión válida a la base de datos.
+        const db = await connect();
         const [rows] = await db.query(strqry, [claustro]);
         res.status(200).json(rows);  // Envía los resultados al cliente en formato JSON.
     } catch (error) {
         console.error('Error al obtener los tipos de cargos:', error);
         res.status(500).send({ message: 'Ocurrió un error al obtener los datos.' });  // Maneja el error devolviendo un mensaje útil.
-    }finally{
-        if(db){db.end()}
     }
 };
 
@@ -73,23 +71,20 @@ export const getCoutTiposCargosDND = async (req, res) => {
 //docentes tipo de cargo
 export const getTipoCargo = async (req, res) => {
     const { tipocargo } = req.params;
-    let connection;
 
-    const strqry = `SELECT c.legajo, a.apellido, c.nc, c.inst, c.fechalt, c.ppal, c.nv, c.pl, c.car, c.mat 
-    FROM dbasistencia.cargos c 
-    INNER JOIN dbasistencia.agentes a ON a.legajo = c.legajo 
-    WHERE es = '1' AND ca = ? 
+    const strqry = `SELECT c.legajo, a.apellido, c.nc, c.inst, c.fechalt, c.ppal, c.nv, c.pl, c.car, c.mat
+    FROM dbasistencia.cargos c
+    INNER JOIN dbasistencia.agentes a ON a.legajo = c.legajo
+    WHERE es = '1' AND ca = ?
     ORDER BY inst, a.apellido`;
 
     try {
-        connection = await connect();
+        const connection = await connect();
         const [rows] = await connection.query(strqry, [tipocargo]);
         res.status(200).send(rows);
     } catch (error) {
         console.error('Error al obtener los tipos de cargo:', error);
         res.status(500).send({ message: 'Ocurrió un error al obtener los datos.' });
-    } finally {
-        if (connection) connection.end();
     }
 };
 
@@ -170,11 +165,12 @@ export const getCargosVigentesReport =async (req,res)=>{
 
 const construirCondicion = (sede, tipoc, claustro, adicional) => {
 
-    let condicion = 'where c.es = ?';
+    // solo cargos vigentes (la tabla `cargos` tiene la marca `vigente`)
+    let condicion = "where c.vigente = 'S' and c.es = ?";
     const params = [claustro === '1' ? '1' : '2'];
 
     if (claustro === '3') {
-        condicion = 'where ppal = ?';
+        condicion = "where c.vigente = 'S' and c.ppal = ?";
         params[0] = '38';
     }
     if (sede !== '0') {
@@ -202,7 +198,7 @@ export const getCargosVigentesReport =async (req,res)=> {
 let strqry = '';
 
 if (claustro === '2') {
-    strqry = `select c.legajo, age.apellido, age.nrocuil, age.area, drh.fechnac, c.ppal, c.nv, c.fechalt, c.nresa, c.fechbaj,case when adic=1 then 'FC-D'
+    strqry = `select c.legajo, c.inst, age.apellido, age.nrocuil, age.area, drh.fechnac, c.ppal, c.nv, c.fechalt, c.nresa, c.fechbaj,case when adic=1 then 'FC-D'
     when adic=2 then 'FC-ND' when adic=3 then 'FC-G' end as adic,
     case when ca=1 then 'Efectivo' when ca=2 then 'Interino' when ca=3 then 'Interino Remplazante' when ca=4 then 'Contratado'
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion'
@@ -212,7 +208,7 @@ if (claustro === '2') {
     inner join dbasistencia.agentes age on age.legajo=c.legajo
     inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
 } else if (claustro === '1') {
-    strqry = `select c.legajo, age.apellido, age.nrocuil, drh.fechnac, c.ppal, c.nv, c.car, c.pl, c.mat, c.fechalt, c.nresa, c.fechbaj, case when adic=1 then 'FC-D'
+    strqry = `select c.legajo, c.inst, age.apellido, age.nrocuil, drh.fechnac, c.ppal, c.nv, c.car, c.pl, c.mat, c.fechalt, c.nresa, c.fechbaj, case when adic=1 then 'FC-D'
     when adic=2 then 'FC-ND' when adic=3 then 'FC-G' end as adic,
     case when ca=1 then 'Efectivo' when ca=2 then 'Interino' when ca=3 then 'Interino Remplazante' when ca=4 then 'Contratado'
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion'
@@ -222,7 +218,7 @@ if (claustro === '2') {
     inner join dbasistencia.agentes age on age.legajo=c.legajo
     inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
 } else if (claustro==='3'){
-     strqry = `select c.legajo, age.apellido, age.nrocuil, age.area, drh.fechnac, c.ppal, c.nv, c.fechalt, c.nresa, c.fechbaj,case when adic=1 then 'FC-D'
+     strqry = `select c.legajo, c.inst, age.apellido, age.nrocuil, age.area, drh.fechnac, c.ppal, c.nv, c.fechalt, c.nresa, c.fechbaj,case when adic=1 then 'FC-D'
     when adic=2 then 'FC-ND' when adic=3 then 'FC-G' end as adic,
     case when ca=1 then 'Efectivo' when ca=2 then 'Interino' when ca=3 then 'Interino Remplazante' when ca=4 then 'Contratado'
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion'

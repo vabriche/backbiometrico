@@ -1,7 +1,7 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 import { readFileSync } from 'fs'
-import 'dotenv/config'
+import './env.js'
 
 // Requiere la variable FIREBASE_SERVICE_ACCOUNT_PATH en el .env, apuntando al
 // archivo JSON de credenciales de servicio descargado desde

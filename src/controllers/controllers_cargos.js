@@ -49,6 +49,7 @@ export const newAgente = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'Error al guardar los datos', detalle: error.message })
     }
 }
 
@@ -64,6 +65,7 @@ export const updateAgente = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 
 }
@@ -81,6 +83,7 @@ export const getDatosAgentePer = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -98,6 +101,7 @@ export const newDatosAgentesPer = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -114,6 +118,7 @@ export const modiDatosAgentesPer = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -131,6 +136,7 @@ export const getAntiguedadAgente = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -149,6 +155,7 @@ export const newDatosAgentesAnt = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -163,6 +170,7 @@ export const modiDatosAgentesAnt = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -180,6 +188,7 @@ export const getFamiliaAgente = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -196,6 +205,7 @@ export const newDatosAgentesFam = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -210,6 +220,7 @@ export const modiDatosAgentesFam = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -227,6 +238,7 @@ export const getDomiContactoAgente = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -245,6 +257,7 @@ export const newDatosAgentesContacto = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -259,6 +272,7 @@ export const modiDatosAgentesContacto = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -400,6 +414,7 @@ export const getCargosVigentesAgente = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -416,6 +431,7 @@ export const getCargosHistoricosAgentes = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 
 }
@@ -426,7 +442,7 @@ export const getCargosHistoricosAgentes = async (req, res) => {
 //cargos vigentes interinos docentes
 export const getCargosVigentesInterinos = async (req, res) => {
 
-    let cab = 'SELECT cg.legajo,age.apellido,cg.row_id,cg.nc,cg.inst,cg.ca,cg.es,cg.ppal,cg.nv,cg.car,cg.pl,cg.mat,DATE_FORMAT(cg.fechalt,"%d-%m-%Y") as fechaAlta ,cg.nresa,cg.titular, cg.vigente,cg.adic FROM cargos as cg '
+    let cab = 'SELECT cg.legajo,age.apellido,cg.row_id,cg.nc,cg.inst,cg.ca,cg.es,cg.ppal,cg.nv,cg.car,cg.pl,cg.mat,DATE_FORMAT(cg.fechalt,"%d-%m-%Y") as fechaAlta ,DATE_FORMAT(cg.fechbaj,"%d-%m-%Y") as fechaBaja ,cg.nresa,cg.titular, cg.vigente,cg.adic,cg.ncg,cg.rempla,cg.st,cg.observaciones FROM cargos as cg '
     let innerJ = 'INNER JOIN agentes as age ON age.legajo = cg.legajo '
     let whei = 'WHERE cg.es=1 and cg.vigente="S" AND ca in (2,3) order by age.apellido,cg.car, cg.nc,fechalt'
     let strqry = `${cab}${innerJ}${whei}`
@@ -445,7 +461,7 @@ export const getCargosVigentesInterinos = async (req, res) => {
 export const getCargosVigentesInterinosND = async (req, res)=>{
     
     
-    let strqry=`select cg.legajo,age.apellido,cg.row_id,cg.nc,cg.inst,cg.ca,cg.es,cg.ppal,cg.nv,age.area,DATE_FORMAT(cg.fechalt,"%d-%m-%Y") as fechaAlta ,cg.nresa,cg.titular, cg.vigente,cg.adic
+    let strqry=`select cg.legajo,age.apellido,cg.row_id,cg.nc,cg.inst,cg.ca,cg.es,cg.ppal,cg.nv,age.area,DATE_FORMAT(cg.fechalt,"%d-%m-%Y") as fechaAlta, DATE_FORMAT(cg.fechbaj,"%d-%m-%Y") as fechaBaja ,cg.nresa,cg.titular, cg.vigente,cg.adic, cg.ncg,cg.car,cg.pl,cg.mat,cg.rempla,cg.st,cg.observaciones
     from dbasistencia.cargos cg inner join dbasistencia.agentes age on age.legajo=cg.legajo
     where es=2 and ca=4 and vigente='S' `
 
@@ -478,6 +494,7 @@ export const darBajaCargo = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'Error al procesar la operación sobre el cargo', detalle: error.message })
     }
 }
 
@@ -507,7 +524,7 @@ export const createCargoNuevo = async (req, res) => {
 
 
         const strqry = "INSERT INTO cargos (legajo,nc,inst,ca,es,ppal,nv,pl,mat,fechalt,nresa,adic,titular,ncg,fechbaj,car,rempla,st, observaciones) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-        const params = [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic, titu, ncg, fechaB, car, rempl, st, observaciones]
+        const params = [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic, titu, ncg, fechaB || null, car, rempl, st, observaciones]
 
         const db = await connect()
         const resu = await db.query(strqry, params)
@@ -518,6 +535,7 @@ export const createCargoNuevo = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'Error al procesar la operación sobre el cargo', detalle: error.message })
     }
 }
 
@@ -529,7 +547,7 @@ export const createCargoNuevoHist = async (req, res) => {
 
 
         const strqry = "INSERT INTO cargoant (legajo,nc,inst,ca,es,ppal,nv,pl,mat,fechalt,nresa,adic,titular,ncg,fechbaj,nresb,car,st,mb,rempla, observaciones) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-        const params = [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic, titu, ncg, fechaB, nroresB, car, sit, motbj, rempl, observaciones]
+        const params = [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic, titu, ncg, fechaB || null, nroresB, car, sit, motbj, rempl, observaciones]
 
         const db = await connect()
         const resu = await db.query(strqry, params)
@@ -540,6 +558,7 @@ export const createCargoNuevoHist = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'Error al procesar la operación sobre el cargo', detalle: error.message })
     }
 
 }
@@ -604,7 +623,11 @@ export const getMotivosInasistencias = async (req, res) => {
 //si no se elige un motivo muestra todos
 export const getInasistenciasAgente = async (req, res) => {
 
-    const { legajo, tipo, motivo } = req.params
+    const { legajo, tipo } = req.params
+    // El cliente todavía manda motivo entre comillas (ej. "'02'"), herencia de
+    // cuando esta consulta armaba el SQL a mano sin parametrizar. Se limpian
+    // acá para no depender de que el llamador cambie.
+    const motivo = req.params.motivo?.replace(/^['"]|['"]$/g, '')
     const anio = new Date().getFullYear()
 
     let strqry = ''
@@ -615,8 +638,8 @@ export const getInasistenciasAgente = async (req, res) => {
     } else {
         strqry = `SELECT id_ina,nleg,nc,mot,r,DATE_FORMAT(fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(fechfin,"%d-%m-%Y") as fechaf,nres, estado FROM inasist WHERE nleg = ? and YEAR(fechcom) = ? AND mot = ? ORDER BY fechcom desc`
         params = [legajo, anio, motivo]
-    }
 
+    }
     try {
         const db = await connect()
         const [rows] = await db.query(strqry, params)
@@ -894,6 +917,69 @@ export const getAgentescumpleEdad = async (req, res) => {
 
 
 
+// Agentes con cargo vigente que cumplen alguna de las edades pedidas en el año
+// en curso (edad = año actual - año de nacimiento, igual que /cumpleEdad).
+// GET /cumplenEdades?edades=60,65,66,70
+export const getAgentesCumplenEdades = async (req, res) => {
+    const edades = String(req.query.edades ?? '').split(',').map(Number)
+    if (edades.length === 0 || edades.length > 10 || edades.some((e) => !Number.isInteger(e) || e < 18 || e > 100)) {
+        return res.status(400).json({ error: 'edades inválidas: lista de enteros entre 18 y 100 separados por coma' })
+    }
+
+    const strqry = `SELECT age.legajo, age.apellido, age.condicion, da.sexo,
+        DATE_FORMAT(da.fechnac, "%d-%m-%Y") AS fechaNac,
+        EXTRACT(YEAR FROM CURDATE()) - EXTRACT(YEAR FROM da.fechnac) AS edad,
+        TIMESTAMPDIFF(YEAR, da.fechnac, CURDATE()) AS edadActual
+        FROM datos_rrhh AS da
+        INNER JOIN agentes AS age ON age.legajo = da.legajo
+        WHERE EXTRACT(YEAR FROM CURDATE()) - EXTRACT(YEAR FROM da.fechnac) IN (?)
+        AND EXISTS (SELECT 1 FROM cargos AS c WHERE c.legajo = age.legajo AND c.vigente = 'S')
+        ORDER BY edad, MONTH(da.fechnac), DAY(da.fechnac), age.apellido`
+
+    try {
+        const db = await connect()
+        const [resu] = await db.query(strqry, [edades])
+        res.send(resu)
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ error: 'Error al consultar las edades' })
+    }
+}
+
+// Resumen para la pantalla de inicio: números y agrupaciones sobre los cargos vigentes.
+// Interinos y contratados = ca 2 (interino), 3 (interino remplazante) y 4 (contratado).
+export const getResumenInicio = async (req, res) => {
+    const VIGENTES = "vigente = 'S'"
+    const VENCIBLES = "ca IN (2, 3, 4)"
+    try {
+        const db = await connect()
+        const [
+            [porClaustro], [porTipo], [porSede], [vencimientos], [[vencidos]], [[en30]], [[adicionales]],
+        ] = await Promise.all([
+            db.query(`SELECT age.condicion, COUNT(DISTINCT c.legajo) AS n FROM cargos c
+                INNER JOIN agentes age ON age.legajo = c.legajo WHERE c.${VIGENTES} GROUP BY age.condicion`),
+            db.query(`SELECT ca, COUNT(*) AS n FROM cargos WHERE ${VIGENTES} GROUP BY ca ORDER BY n DESC`),
+            db.query(`SELECT inst, COUNT(*) AS n FROM cargos WHERE ${VIGENTES} GROUP BY inst ORDER BY inst`),
+            // próximos 6 meses calendario (el actual y los 5 siguientes)
+            db.query(`SELECT DATE_FORMAT(fechbaj, '%Y-%m') AS mes, COUNT(*) AS n FROM cargos
+                WHERE ${VIGENTES} AND ${VENCIBLES} AND fechbaj >= CURDATE()
+                AND fechbaj <= LAST_DAY(DATE_ADD(CURDATE(), INTERVAL 5 MONTH))
+                GROUP BY mes ORDER BY mes`),
+            db.query(`SELECT COUNT(*) AS n FROM cargos WHERE ${VIGENTES} AND ${VENCIBLES} AND fechbaj < CURDATE()`),
+            db.query(`SELECT COUNT(*) AS n FROM cargos WHERE ${VIGENTES} AND ${VENCIBLES}
+                AND fechbaj >= CURDATE() AND fechbaj <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)`),
+            db.query(`SELECT COUNT(*) AS n FROM adicional_rrhh WHERE ${VIGENTES} AND fecha_fin < CURDATE()`),
+        ])
+        res.send({
+            porClaustro, porTipo, porSede, vencimientos,
+            vencidos: Number(vencidos.n), vencenEn30Dias: Number(en30.n), adicionalesVencidos: Number(adicionales.n),
+        })
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ error: 'Error al armar el resumen' })
+    }
+}
+
 //lugar de nacimiento
 export const getLugarNac = async (req, res) => {
 
@@ -904,6 +990,7 @@ export const getLugarNac = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -946,6 +1033,7 @@ export const createAdicionalNuevo = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'Error al guardar los datos', detalle: error.message })
     }
 }
 
@@ -1028,6 +1116,7 @@ export const getEstudiosAgente = async (req, res) => {
         res.send(rows)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -1044,6 +1133,7 @@ export const newDatosAgentesEstudio = async (req, res) => {
 
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -1057,6 +1147,7 @@ export const modiDatosAgentesEstudio = async (req, res) => {
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
     }
 }
 
@@ -1071,11 +1162,44 @@ export const deleteDatoAgenteEstudio = async (req, res) => {
         res.send(resud)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'No se pudo completar la operación' })
 
     }
 
 }
-//instituciones
+//instituciones, establecimientos y titulos (tablas de apoyo de los estudios)
+const errorServidor = (res, mensaje) => (error) => {
+    console.log(error)
+    res.status(500).json({ error: mensaje })
+}
+
+// Datos de estudios (`estudios_rrhh`) y establecimientos que usan un registro: si está en
+// uso no se borra, porque la ficha de los agentes hace INNER JOIN con estas tablas y
+// el estudio desaparecería.
+const contarUsos = async (db, consultas, params) => {
+    let total = 0
+    for (const consulta of consultas) {
+        const [[fila]] = await db.query(consulta, params)
+        total += Number(fila.total)
+    }
+    return total
+}
+
+const borrarSiNoEstaEnUso = async (res, { tabla, id, consultasUso, descripcion }) => {
+    try {
+        const db = await connect()
+        const usos = await contarUsos(db, consultasUso, [id])
+        if (usos > 0) {
+            return res.status(409).json({ error: 'EN_USO', detalle: `No se puede eliminar: ${descripcion} (${usos} registro${usos === 1 ? '' : 's'}).` })
+        }
+        const [resud] = await db.query(`DELETE FROM ${tabla} WHERE id_row = ?`, [id])
+        res.send(resud)
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ error: 'No se pudo eliminar' })
+    }
+}
+
 //traer
 export const getInstituciones = async (req, res) => {
     try {
@@ -1083,7 +1207,7 @@ export const getInstituciones = async (req, res) => {
         const [rows] = await db.query('SELECT * FROM instituciones ORDER BY nombre')
         res.send(rows)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'Error al consultar las instituciones')(error)
     }
 }
 
@@ -1091,6 +1215,7 @@ export const getInstituciones = async (req, res) => {
 export const grabarInstitucion = async (req, res) => {
 
     const { codigoI, nombre } = req.body
+    if (!nombre || !String(nombre).trim()) return res.status(400).json({ error: 'El nombre es obligatorio' })
     const insStr = `INSERT INTO instituciones (codigoI, nombre) VALUES(?,?)`
 
     try {
@@ -1099,7 +1224,7 @@ export const grabarInstitucion = async (req, res) => {
         res.send(resu)
 
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'No se pudo grabar la institución')(error)
     }
 }
 
@@ -1114,25 +1239,18 @@ export const modiDatosInstitucion = async (req, res) => {
         const resu = await db.query('UPDATE instituciones SET ? WHERE id_row=? ', [cambios, id])
         res.send(resu)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'No se pudo modificar la institución')(error)
     }
 }
 
 // eliminar una institucion
-export const deleteIstitucion = async (req, res) => {
-
-    const { id } = req.params
-    try {
-        const strqd = `DELETE FROM instituciones WHERE id_row = ?`
-        const db = await connect()
-        const resud = await db.query(strqd, [id])
-        res.send(resud)
-    } catch (error) {
-        res.send(error)
-
-    }
-
-}
+export const deleteIstitucion = (req, res) => borrarSiNoEstaEnUso(res, {
+    tabla: 'instituciones', id: req.params.id, descripcion: 'la institución tiene establecimientos o estudios de agentes',
+    consultasUso: [
+        'SELECT COUNT(*) AS total FROM establecimientos WHERE institucion = ?',
+        'SELECT COUNT(*) AS total FROM estudios_rrhh WHERE institucion = ?',
+    ],
+})
 
 // establecimientos
 export const getEstablecimientos = async (req, res) => {
@@ -1142,13 +1260,14 @@ export const getEstablecimientos = async (req, res) => {
         const [rows] = await db.query(`SELECT * FROM establecimientos WHERE institucion = ? ORDER BY nombre`, [insti])
         res.send(rows)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'Error al consultar los establecimientos')(error)
     }
 }
 //grabar
 export const grabarEstablecimiento = async (req, res) => {
 
     const { institucion, nombre } = req.body
+    if (!nombre || !String(nombre).trim() || !institucion) return res.status(400).json({ error: 'El nombre y la institución son obligatorios' })
     const insStr = `INSERT INTO establecimientos (institucion, nombre) VALUES(?,?)`
     try {
 
@@ -1156,7 +1275,7 @@ export const grabarEstablecimiento = async (req, res) => {
         const resu = await db.query(insStr, [institucion, nombre])
         res.send(resu)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'No se pudo grabar el establecimiento')(error)
     }
 }
 
@@ -1171,25 +1290,15 @@ export const modiDatosEstablecimiento = async (req, res) => {
         const resu = await db.query('UPDATE establecimientos SET ? WHERE id_row=? ', [cambios, id])
         res.send(resu)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'No se pudo modificar el establecimiento')(error)
     }
 }
 
 // eliminar una establecimineto
-export const deleteEstablecimiento = async (req, res) => {
-
-    const { id } = req.params
-    try {
-        const strqd = `DELETE FROM establecimientos WHERE id_row = ?`
-        const db = await connect()
-        const resud = await db.query(strqd, [id])
-        res.send(resud)
-    } catch (error) {
-        console.log(error)
-
-    }
-
-}
+export const deleteEstablecimiento = (req, res) => borrarSiNoEstaEnUso(res, {
+    tabla: 'establecimientos', id: req.params.id, descripcion: 'el establecimiento tiene estudios de agentes',
+    consultasUso: ['SELECT COUNT(*) AS total FROM estudios_rrhh WHERE establecimiento = ?'],
+})
 
 
 //titulos
@@ -1200,7 +1309,7 @@ export const getTitulos = async (req, res) => {
         const [rows] = await db.query('SELECT * FROM titulos ORDER BY nombre')
         res.send(rows)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'Error al consultar los títulos')(error)
     }
 }
 
@@ -1208,13 +1317,14 @@ export const getTitulos = async (req, res) => {
 export const grabarTitulo = async (req, res) => {
 
     const { nombre } = req.body
+    if (!nombre || !String(nombre).trim()) return res.status(400).json({ error: 'El nombre es obligatorio' })
     const insStr = `INSERT INTO titulos(nombre) VALUES(?)`
     try {
         const db = await connect()
         const resu = await db.query(insStr, [nombre])
         res.send(resu)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'No se pudo grabar el título')(error)
     }
 }
 
@@ -1227,25 +1337,15 @@ export const modiDatosTitulo = async (req, res) => {
         const resu = await db.query(`UPDATE titulos SET ? WHERE id_row=? `, [cambios, id])
         res.send(resu)
     } catch (error) {
-        console.log(error)
+        errorServidor(res, 'No se pudo modificar el título')(error)
     }
 }
 
 // eliminar un Titulo
-export const deleteTitulo = async (req, res) => {
-
-    const { id } = req.params
-    try {
-        const strqd = `DELETE FROM titulos WHERE id_row = ?`
-        const db = await connect()
-        const resud = await db.query(strqd, [id])
-        res.send(resud)
-    } catch (error) {
-        console.log(error)
-
-    }
-
-}
+export const deleteTitulo = (req, res) => borrarSiNoEstaEnUso(res, {
+    tabla: 'titulos', id: req.params.id, descripcion: 'el título está cargado en estudios de agentes',
+    consultasUso: ['SELECT COUNT(*) AS total FROM estudios_rrhh WHERE titulo = ?'],
+})
 
 export const buscarAntiguedadvaca =async (req,res)=>{
     const {legajo} = req.params
