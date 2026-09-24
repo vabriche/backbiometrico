@@ -339,6 +339,19 @@ export const actualizarRegistroParte = async (req, res) => {
 // Motivo del parte (motina.codina) con el formato de 2 dígitos que usa `inasist.mot`
 const motivoInasistencia = (motivoCod) => String(motivoCod).padStart(2, '0');
 
+// Antes de este proceso los partes se cargaban a mano como inasistencia, con el
+// nro. de parte en `nres` ("121972" o "Parte 121972"). Busca esa inasistencia
+// del mismo legajo para no duplicarla; devuelve la primera o null.
+const buscarInasistenciaManual = async (conn, legajo, codParte) => {
+  const [rows] = await conn.query(
+    `SELECT id_ina, nres, mot, estado,
+            DATE_FORMAT(fechcom, '%d-%m-%Y') AS fechcom, DATE_FORMAT(fechfin, '%d-%m-%Y') AS fechfin
+       FROM inasist WHERE nleg = ? AND nres LIKE ? ORDER BY id_ina`,
+    [legajo, `%${codParte}%`]
+  );
+  return rows.find((r) => String(r.nres).replace(/\D/g, '') === String(codParte)) ?? null;
+};
+
 // Gestiona un parte médico creando/completando su inasistencia, todo en una
 // transacción (si algo falla no queda una inasistencia sin el parte marcado):
 //  - Abierto (A) y registrado='N': crea la inasistencia Pendiente. Como en un
@@ -350,6 +363,10 @@ const motivoInasistencia = (motivoCod) => String(motivoCod).padStart(2, '0');
 //    Aceptada y deja el parte en 'S'.
 //  - Cerrado (C) y registrado='N' (llegó cerrado sin gestionar): crea la
 //    inasistencia Aceptada con las fechas reales y deja el parte en 'S'.
+//  - registrado='N' pero ya cargado a mano (ver buscarInasistenciaManual): no
+//    crea nada, enlaza esa inasistencia, deja el parte en 'S' ('P' si sigue
+//    abierto, para completarla al cerrar) y responde
+//    `inasistenciaManual` para avisarle al usuario.
 // Abierto y ya 'P' no tiene nada para hacer hasta que el parte cierre.
 export const gestionarParte = async (req, res) => {
   const { codParte } = req.params;
@@ -379,8 +396,22 @@ export const gestionarParte = async (req, res) => {
 
     let registradoNuevo;
     let idIna;
+    let inasistenciaManual = null;
 
-    if (parte.registrado === 'P') {
+    if (parte.registrado === 'N') {
+      inasistenciaManual = await buscarInasistenciaManual(conn, parte.legajo, parte.cod_parte);
+    }
+
+    if (inasistenciaManual) {
+      // Abierto queda Parcial: al cerrar, la rama 'P' completa esa misma inasistencia.
+      idIna = inasistenciaManual.id_ina;
+      registradoNuevo = parte.estado === 'A' ? 'P' : 'S';
+      if (registradoNuevo === 'P') {
+        // Igual que las que crea el sistema para un parte abierto: Pendiente hasta que cierre.
+        await conn.query(`UPDATE inasist SET estado = 'P' WHERE id_ina = ?`, [idIna]);
+        inasistenciaManual.estado = 'P';
+      }
+    } else if (parte.registrado === 'P') {
       if (parte.estado !== 'C') {
         await conn.rollback();
         return res.status(409).json({ error: 'El parte sigue abierto y ya tiene su inasistencia pendiente; se completa cuando cierre.' });
@@ -430,7 +461,10 @@ export const gestionarParte = async (req, res) => {
     );
 
     await conn.commit();
-    res.status(200).json({ message: 'Parte médico gestionado', codParte: Number(codParte), registrado: registradoNuevo, id_ina: idIna });
+    res.status(200).json({
+      message: 'Parte médico gestionado', codParte: Number(codParte), registrado: registradoNuevo, id_ina: idIna,
+      inasistenciaManual,
+    });
   } catch (error) {
     await conn.rollback();
     console.error('Error al gestionar el parte médico:', error);
