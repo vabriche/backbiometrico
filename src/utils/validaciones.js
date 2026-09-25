@@ -41,3 +41,26 @@ export const filtrarColumnasPermitidas = (body, permitidas) => {
   }
   return resultado;
 };
+
+// Convierte horas en decimal (ej. 5.40) a formato HH:MM (ej. "05:24"). La
+// parte decimal es una fracción de 60 minutos, no minutos directos: 0.40hs =
+// 0.40*60 = 24 minutos.
+export const formatearHorasHHMM = (horasDecimal) => {
+  if (horasDecimal === null || horasDecimal === undefined || isNaN(horasDecimal)) return null;
+  let horas = Math.trunc(horasDecimal);
+  let minutos = Math.round((horasDecimal - horas) * 60);
+  if (minutos === 60) {
+    minutos = 0;
+    horas += 1;
+  }
+  return `${String(horas).padStart(2, '0')}:${String(minutos).padStart(2, '0')}`;
+};
+
+// Da formato a una columna de horas trabajadas para mostrar: 'FR' (falta
+// registro) si no hay marca de entrada o de salida (valor vacío o 'X'), o el
+// valor en HH:MM si está completo.
+export const formatearHorasTrabajadas = (horasDecimal, hEntrada, hSalida) => {
+  const esVacio = (valor) => !valor || valor === 'X';
+  if (esVacio(hEntrada) || esVacio(hSalida)) return 'FR';
+  return formatearHorasHHMM(horasDecimal) ?? 'FR';
+};

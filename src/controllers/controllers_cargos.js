@@ -1410,3 +1410,17 @@ export const deleteRegistroRRHH = async (req, res) => {
     }
 
 }
+
+// Fecha actual (yyyy-mm-dd) tomada de la base de datos: las validaciones que
+// dependen de "hoy" (p. ej. no renovar un cargo sin vencer) no pueden confiar
+// en el reloj de la PC del usuario, que se puede cambiar.
+export const getFechaServidor = async (req, res) => {
+    try {
+        const db = await connect()
+        const [rows] = await db.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS fecha")
+        res.json({ fecha: rows[0].fecha })
+    } catch (error) {
+        console.error('Error al obtener la fecha del servidor:', error)
+        res.status(500).json({ error: 'No se pudo obtener la fecha del servidor' })
+    }
+}

@@ -2,7 +2,7 @@ import { connect } from '../database.js';
 import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
 
-import { validarFormatoHora, calcularHorasSeguro, sanitizarLegajo } from "../utils/validaciones.js";
+import { validarFormatoHora, calcularHorasSeguro, sanitizarLegajo, formatearHorasTrabajadas, formatearHorasHHMM } from "../utils/validaciones.js";
 import { createToken } from "../config/jw.config.js";
 import { getFirebaseAuth } from "../config/firebaseAdmin.config.js";
 
@@ -484,8 +484,7 @@ export const getHorario_persona_fechas = async (req, res) => {
     const { condi, leg, fecha_i, fecha_f } = req.params;
 
     try {
-        let cabeza = 'SELECT age.area,age.legajo, age.apellido,DATE_FORMAT(reg.fecha,"%d-%m-%Y") as fecha, reg.Hentrada, reg.Hsalida, round(reg.cantidadHoras,2) as horasT, nroregistro,virtual FROM '
-        //let cabeza='SELECT age.area,age.legajo, age.apellido,reg.fecha, reg.Hentrada, reg.Hsalida, round(reg.cantidadHoras,2) as horasT FROM ' 
+        let cabeza = 'SELECT age.area,age.legajo, age.apellido,DATE_FORMAT(reg.fecha,"%d-%m-%Y") as fecha, reg.Hentrada, reg.Hsalida, reg.cantidadHoras as horasT, nroregistro,virtual FROM '
 
         let tabla = 'registroasistenciand'
         if (condi === '0') {
@@ -506,7 +505,8 @@ export const getHorario_persona_fechas = async (req, res) => {
         const db = await connect();
         const params = fecha_f === '0' ? [leg, fecha_i] : [leg, fecha_i, fecha_f];
         const [rows] = await db.query(str_query, params)
-        res.send(rows)
+        const resultado = rows.map(r => ({ ...r, horasT: formatearHorasTrabajadas(r.horasT, r.Hentrada, r.Hsalida) }))
+        res.send(resultado)
     } catch (e) {
         console.log(e)
     }
@@ -551,7 +551,7 @@ export const getHorarioClaustroFechas = async (req, res) => {
 
 
     try {
-        const cabeza = 'SELECT age.area,age.legajo, age.apellido,DATE_FORMAT(reg.fecha,"%d-%m-%Y") as fecha, reg.Hentrada, reg.Hsalida,round(reg.cantidadHoras,2) as horasT, reg.nroregistro FROM '
+        const cabeza = 'SELECT age.area,age.legajo, age.apellido,DATE_FORMAT(reg.fecha,"%d-%m-%Y") as fecha, reg.Hentrada, reg.Hsalida,reg.cantidadHoras as horasT, reg.nroregistro FROM '
         const tabla = condi === '1' ? 'registroasistenciad' : 'registroasistenciand'
         const cola = fecha_f === '0'
             ? ' WHERE fecha = ? ORDER BY age.apellido,reg.fecha,reg.Hentrada'
@@ -560,7 +560,8 @@ export const getHorarioClaustroFechas = async (req, res) => {
         const params = fecha_f === '0' ? [fecha_i] : [fecha_i, fecha_f];
         const db = await connect();
         const [rows] = await db.query(str_query, params)
-        res.send(rows)
+        const resultado = rows.map(r => ({ ...r, horasT: formatearHorasTrabajadas(r.horasT, r.Hentrada, r.Hsalida) }))
+        res.send(resultado)
     } catch (e) {
         console.log(e)
     }
@@ -578,11 +579,11 @@ export const getHorasT_Persona_fechas = async (req, res) => {
     try {
 
         if (condi === '0') {
-            cabeza = "SELECT round(sum (cantidadhoras),2) as horasT FROM registroasistenciand"
+            cabeza = "SELECT sum(cantidadhoras) as horasT FROM registroasistenciand"
 
         } else if (condi === '1') {
 
-            cabeza = "SELECT round(sum (cantidadhoras),2) as horasT FROM registroasistenciand"
+            cabeza = "SELECT sum(cantidadhoras) as horasT FROM registroasistenciand"
         }
         let cola = '';
         if (fecha_f === '0') {
@@ -595,7 +596,8 @@ export const getHorasT_Persona_fechas = async (req, res) => {
         const db = await connect();
         const params = fecha_f === '0' ? [leg, fecha_i] : [leg, fecha_i, fecha_f];
         const [rows] = await db.query(str_query, params)
-        res.send(rows)
+        const resultado = rows.map(r => ({ ...r, horasT: formatearHorasHHMM(r.horasT) }))
+        res.send(resultado)
     } catch (error) {
         console.log(error)
     }
@@ -610,7 +612,7 @@ export const getHorasAreadeTrabajo = async (req, res) => {
     const { area, fecha_i, fecha_f } = req.params
 
     try {
-        let cabeza = 'SELECT age.area,age.legajo, age.apellido,DATE_FORMAT(reg.fecha,"%d-%m-%Y") as fecha, reg.Hentrada, reg.Hsalida,round(reg.cantidadHoras,2) as horasT,reg.virtual, reg.nroregistro FROM '
+        let cabeza = 'SELECT age.area,age.legajo, age.apellido,DATE_FORMAT(reg.fecha,"%d-%m-%Y") as fecha, reg.Hentrada, reg.Hsalida,reg.cantidadHoras as horasT,reg.virtual, reg.nroregistro FROM '
 
         let tabla = ''
         if (area === 'Docentes') {
@@ -637,11 +639,11 @@ export const getHorasAreadeTrabajo = async (req, res) => {
 
 
         let str_query = `${cabeza} ${tabla} as reg INNER JOIN agentes as age ON age.legajo = reg.legajo ${cola}`
-        console.log(str_query)
         const db = await connect();
         const params = fecha_f === '0' ? [fecha_i] : [area, fecha_i, fecha_f];
         const [rows] = await db.query(str_query, params)
-        res.send(rows)
+        const resultado = rows.map(r => ({ ...r, horasT: formatearHorasTrabajadas(r.horasT, r.Hentrada, r.Hsalida) }))
+        res.send(resultado)
     } catch (e) {
         console.log(e)
     }
@@ -1394,7 +1396,7 @@ export const traerControlAsistenciaPersonal = async (req, res) => {
           apellido: agente.apellido,
           Hentrada: 'X',
           Hsalida: 'X',
-          cantidadHoras: null,
+          cantidadHoras: 'FR',
           mot,
           estado,
           observacion
@@ -1411,7 +1413,7 @@ export const traerControlAsistenciaPersonal = async (req, res) => {
           apellido: agente.apellido,
           Hentrada: registro.Hentrada,
           Hsalida: registro.Hsalida,
-          cantidadHoras: registro.cantidadHoras != null ? Math.round(registro.cantidadHoras * 100) / 100 : null,
+          cantidadHoras: formatearHorasTrabajadas(registro.cantidadHoras, registro.Hentrada, registro.Hsalida),
           mot: '',
           estado: '',
           observacion: (tieneEntrada && tieneSalida) ? '' : 'se ha omitido un registro'

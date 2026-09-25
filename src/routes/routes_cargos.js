@@ -18,6 +18,7 @@ import {
   getAgentescumpleEdad,
   getAgentesCumplenEdades,
   getResumenInicio,
+  getFechaServidor,
   getAntiguedadAgente,
   getCargosHistoricosAgentes,
   getCargosPlanta,
@@ -134,6 +135,8 @@ router.get("/ingreanioagentes/:anioI/:lugarI", getIngresoAñoAgentes);
 router.get("/cumpleEdad/:edad", getAgentescumpleEdad);
 router.get("/cumplenEdades", getAgentesCumplenEdades);
 router.get("/resumenInicio", getResumenInicio);
+// Fecha actual según el servidor de base de datos (no depende del reloj de la PC)
+router.get("/fechaservidor", getFechaServidor);
 router.get("/traerloc", getLugarNac);
 //estudios
 router.get("/estudios/:legajo", getEstudiosAgente);
