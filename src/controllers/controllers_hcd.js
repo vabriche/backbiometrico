@@ -44,22 +44,33 @@ export const getPlanEstudio = async (req, res) => {
         res.status(500).json({ error: 'Error al consultar el plan de estudio' })
     }
 }
-//buscar docentes
+// Buscar docentes únicamente por apellido (en cualquier posición).
 export const getDocentes = async (req, res) => {
-    const { patron } = req.params;
-    try {
-        const db = await connect();
-        let rows
-        if (patron == 1) {
-            [rows] = await db.query('SELECT legajo, apellido FROM agentes WHERE condicion=1 order by apellido');
-        } else {
-            [rows] = await db.query('SELECT legajo, apellido FROM agentes WHERE condicion=1 AND apellido like ? order by apellido', [`${patron}%`]);
-        }
-        res.send(rows)
-    } catch (e) {
-        console.log(e)
+    const patron = String(req.params.patron || '').trim();
+
+    if (patron.length < 2) {
+        return res.status(400).send({ error: 'Ingrese al menos dos caracteres del apellido.' });
     }
 
+    try {
+        const db = await connect();
+        const like = `%${patron}%`;
+
+        const [rows] = await db.query(
+            `SELECT legajo, apellido
+             FROM agentes
+             WHERE condicion = 1
+               AND apellido LIKE ?
+             ORDER BY apellido
+             LIMIT 8`,
+            [like]
+        );
+
+        res.send(rows);
+    } catch (e) {
+        console.error('Error buscando docentes:', e);
+        res.status(500).send({ error: 'No se pudo realizar la búsqueda de docentes.' });
+    }
 }
 
 ////
@@ -68,13 +79,40 @@ export const getHconsultaDocente = async (req, res) => {
 
     try {
         const db = await connect();
-        const strqy = `SELECT hc.id_hora,ma.materia,hc.leg,hc.lunes,hc.martes,hc.miercoles,hc.jueves,hc.viernes,hc.novedad,hc.sede,hc.carrera,hc.lugar_c, lugar_v from diahoraconsu as hc
-            INNER JOIN materias ma ON ma.id_materia=hc.id_mat  WHERE hc.vigente='S' AND hc.leg = ?`
+        const strqy = `SELECT
+                hc.id_hora,
+                hc.id_mat,
+                ma.materia,
+                hc.leg,
+                hc.lunes,
+                hc.martes,
+                hc.miercoles,
+                hc.jueves,
+                hc.viernes,
+                CASE
+                    WHEN hc.novedad IS NOT NULL
+                     AND TRIM(hc.novedad) <> ''
+                     AND (hc.f_fin IS NULL OR DATE(hc.f_fin) >= CURDATE())
+                    THEN hc.novedad
+                    ELSE ''
+                END AS novedad,
+                DATE_FORMAT(hc.f_fin, '%Y-%m-%d') AS novedad_fin,
+                hc.sede,
+                hc.carrera,
+                hc.plan,
+                hc.lugar_c,
+                hc.lugar_v
+            FROM diahoraconsu AS hc
+            INNER JOIN materias AS ma ON ma.id_materia = hc.id_mat
+            WHERE hc.vigente = 'S'
+              AND hc.leg = ?
+            ORDER BY ma.materia`;
 
         const [rows] = await db.query(strqy, [legajo]);
-        res.send(rows)
+        res.send(rows);
     } catch (e) {
-        console.log(e)
+        console.error('Error obteniendo horarios del docente:', e);
+        res.status(500).send({ error: 'No se pudieron obtener los horarios del docente.' });
     }
 }
 
@@ -87,14 +125,45 @@ export const getHconsultaMateria = async (req, res) => {
 
     try {
         const db = await connect();
-        const strqy = `SELECT hc.id_hora,hc.leg,ag.apellido,hc.lunes,hc.martes,hc.miercoles,hc.jueves,hc.viernes,hc.novedad,hc.sede,hc.carrera,hc.lugar_c, lugar_v from diahoraconsu as hc
-            INNER JOIN agentes as ag ON ag.legajo = hc.leg
-            WHERE hc.vigente='S' AND hc.id_mat = ? and hc.sede= ? and carrera= ? and plan= ? order by ag.apellido`
+        const strqy = `SELECT
+                hc.id_hora,
+                hc.id_mat,
+                mat.materia,
+                hc.leg,
+                ag.apellido,
+                hc.lunes,
+                hc.martes,
+                hc.miercoles,
+                hc.jueves,
+                hc.viernes,
+                CASE
+                    WHEN hc.novedad IS NOT NULL
+                     AND TRIM(hc.novedad) <> ''
+                     AND (hc.f_fin IS NULL OR DATE(hc.f_fin) >= CURDATE())
+                    THEN hc.novedad
+                    ELSE ''
+                END AS novedad,
+                DATE_FORMAT(hc.f_fin, '%Y-%m-%d') AS novedad_fin,
+                hc.sede,
+                hc.carrera,
+                hc.plan,
+                hc.lugar_c,
+                hc.lugar_v
+            FROM diahoraconsu AS hc
+            INNER JOIN agentes AS ag ON ag.legajo = hc.leg
+            INNER JOIN materias AS mat ON mat.id_materia = hc.id_mat
+            WHERE hc.vigente = 'S'
+              AND hc.id_mat = ?
+              AND hc.sede = ?
+              AND hc.carrera = ?
+              AND hc.plan = ?
+            ORDER BY ag.apellido`;
 
         const [rows] = await db.query(strqy, [id_mater, sede, carrera, plan]);
-        res.send(rows)
+        res.send(rows);
     } catch (e) {
-        console.log(e)
+        console.error('Error obteniendo horarios de la actividad:', e);
+        res.status(500).send({ error: 'No se pudieron obtener los horarios de la actividad.' });
     }
 }
 
@@ -141,9 +210,22 @@ export const getMateriasVigentes = async (req, res) => {
     try {
         const db = await connect();
 
-        const strqy = `SELECT distinct hc.id_mat,mat.materia, hc.catedra  FROM diahoraconsu as hc
-            INNER JOIN materias as mat on mat.id_materia = hc.id_mat
-            WHERE vigente='S' and sede= ? and carrera= ? and plan= ? order by mat.materia`
+        const strqy = `SELECT DISTINCT hc.id_mat, mat.materia, hc.catedra
+            FROM diahoraconsu AS hc
+            INNER JOIN materias AS mat ON mat.id_materia = hc.id_mat
+            WHERE hc.vigente = 'S'
+              AND hc.sede = ?
+              AND hc.carrera = ?
+              AND hc.plan = ?
+              AND (
+                    LENGTH(TRIM(COALESCE(hc.lunes, ''))) > 3
+                 OR LENGTH(TRIM(COALESCE(hc.martes, ''))) > 3
+                 OR LENGTH(TRIM(COALESCE(hc.miercoles, ''))) > 3
+                 OR LENGTH(TRIM(COALESCE(hc.jueves, ''))) > 3
+                 OR LENGTH(TRIM(COALESCE(hc.viernes, ''))) > 3
+                 OR LENGTH(TRIM(COALESCE(hc.sabado, ''))) > 3
+              )
+            ORDER BY mat.materia`
 
         const [rows] = await db.query(strqy, [sede, carrera, plan]);
 
@@ -177,8 +259,8 @@ export const newHorario = async (req, res) => {
 
     // Consulta SQL usando prepared statements para evitar inyección SQL
     const query = `
-      INSERT INTO diahoraconsu 
-      (leg, id_mat, f_inicio, lunes, martes, miercoles, jueves, viernes, sabado, lugar_c, lugar_v, carrera, catedra, plan, sede) 
+      INSERT INTO diahoraconsu
+      (leg, id_mat, f_inicio, lunes, martes, miercoles, jueves, viernes, sabado, lugar_c, lugar_v, carrera, catedra, plan, sede)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
@@ -281,4 +363,3 @@ export const updateHorario = async (req, res) => {
         res.status(500).json({ error: 'Error interno al intentar actualizar el horario.' });
     }
 };
-

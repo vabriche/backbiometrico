@@ -444,7 +444,7 @@ export const getCargosVigentesInterinos = async (req, res) => {
 
     let cab = 'SELECT cg.legajo,age.apellido,cg.row_id,cg.nc,cg.inst,cg.ca,cg.es,cg.ppal,cg.nv,cg.car,cg.pl,cg.mat,DATE_FORMAT(cg.fechalt,"%d-%m-%Y") as fechaAlta ,DATE_FORMAT(cg.fechbaj,"%d-%m-%Y") as fechaBaja ,cg.nresa,cg.titular, cg.vigente,cg.adic,cg.ncg,cg.rempla,cg.st,cg.observaciones FROM cargos as cg '
     let innerJ = 'INNER JOIN agentes as age ON age.legajo = cg.legajo '
-    let whei = 'WHERE cg.es=1 and cg.vigente="S" AND ca in (2,3) order by age.apellido,cg.car, cg.nc,fechalt'
+    let whei = 'WHERE cg.es=1 and cg.vigente="S" AND ca in (2,3,8) order by age.apellido,cg.car, cg.nc,fechalt'
     let strqry = `${cab}${innerJ}${whei}`
     try {
 
