@@ -24,6 +24,26 @@ export const getMaterias = async (req, res) => {
         console.log(e)
     }
 }
+// Plan de estudio: materias de una carrera y plan ordenadas por año de cursada (ele).
+// GET /planEstudio/:carrera/:plan
+export const getPlanEstudio = async (req, res) => {
+    const carrera = Number(req.params.carrera)
+    const plan = Number(req.params.plan)
+    if (!Number.isInteger(carrera) || !Number.isInteger(plan) || carrera < 0 || plan < 0) {
+        return res.status(400).json({ error: 'carrera y plan deben ser enteros' })
+    }
+    try {
+        const db = await connect();
+        const [rows] = await db.query(
+            'SELECT id_materia, pl, mat, car, ele, materia FROM materias WHERE car = ? AND pl = ? ORDER BY ele, mat',
+            [carrera, plan]
+        );
+        res.send(rows);
+    } catch (e) {
+        console.log(e)
+        res.status(500).json({ error: 'Error al consultar el plan de estudio' })
+    }
+}
 //buscar docentes
 export const getDocentes = async (req, res) => {
     const { patron } = req.params;

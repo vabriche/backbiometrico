@@ -6,6 +6,7 @@ import {
   getHconsultaMateria,
   getMaterias,
   getMateriasVigentes,
+  getPlanEstudio,
   newHorario,
   updateHorario,
 } from "../controllers/controllers_hcd.js";
@@ -14,6 +15,7 @@ import { Router } from "express";
 const router = Router();
 
 router.get("/materias/:carrera/:plan", getMaterias);
+router.get("/planEstudio/:carrera/:plan", getPlanEstudio);
 router.get("/docentes/:patron", getDocentes);
 router.get("/consultam/:sede/:carrera/:plan/:id_mater", getHconsultaMateria);
 router.get("/consultamv/:sede/:carrera/:plan", getMateriasVigentes);

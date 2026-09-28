@@ -17,6 +17,7 @@ import {
   getAdicionalesAgente,
   getAgentescumpleEdad,
   getAgentesCumplenEdades,
+  getAgentesAntiguedadIngreso,
   getResumenInicio,
   getFechaServidor,
   getAntiguedadAgente,
@@ -134,6 +135,7 @@ router.delete("/deladicional/:id/:legajo", deleteAdicional);
 router.get("/ingreanioagentes/:anioI/:lugarI", getIngresoAñoAgentes);
 router.get("/cumpleEdad/:edad", getAgentescumpleEdad);
 router.get("/cumplenEdades", getAgentesCumplenEdades);
+router.get("/antiguedadIngreso", getAgentesAntiguedadIngreso);
 router.get("/resumenInicio", getResumenInicio);
 // Fecha actual según el servidor de base de datos (no depende del reloj de la PC)
 router.get("/fechaservidor", getFechaServidor);

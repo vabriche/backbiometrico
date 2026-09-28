@@ -873,28 +873,62 @@ export const bajaLicencia =async (req, res)=>{
 //consultas varias
 //año de ingreso
 
+// Agentes que ingresaron en el año a la FCE (lugarI 1), UNCuyo (2) o APN (3).
 export const getIngresoAñoAgentes = async (req, res) => {
     const { anioI, lugarI } = req.params
+    const campos = { '1': 'fifce', '2': 'fiunc', '3': 'fiapn' }
+    const anio = Number(anioI)
+    if (!campos[lugarI] || !Number.isInteger(anio) || anio < 1900 || anio > 2100) {
+        return res.status(400).json({ error: 'parámetros inválidos: año entre 1900 y 2100 y lugar 1, 2 o 3' })
+    }
+    const campo = campos[lugarI]
+    const strquery = `SELECT age.legajo, age.apellido, age.condicion, DATE_FORMAT(da.fiapn, "%d-%m-%Y") AS fechaIAPN,
+        DATE_FORMAT(da.fiunc, "%d-%m-%Y") AS fechaIUNC, DATE_FORMAT(da.fifce, "%d-%m-%Y") AS fechaIFCE
+        FROM datos_rrhh AS da
+        INNER JOIN agentes AS age ON age.legajo = da.legajo
+        WHERE EXTRACT(YEAR FROM da.${campo}) = ?
+        ORDER BY da.${campo}, age.apellido`
     try {
-        const strqryC = 'SELECT age.legajo,age.apellido, DATE_FORMAT(da.fiapn,"%d-%m-%Y") as fechaIAPN,DATE_FORMAT(da.fiunc,"%d-%m-%Y") as fechaIUNC,DATE_FORMAT(da.fifce,"%d-%m-%Y") as fechaIFCE FROM datos_rrhh as da'
-        const strqryI = ' INNER JOIN agentes as age ON age.legajo=da.legajo'
-        let strqryW = ''
-        if (lugarI === '1') {
-            strqryW = ` WHERE EXTRACT(YEAR FROM fifce) = ?`
-        } else if (lugarI === '2') {
-            strqryW = ` WHERE EXTRACT(YEAR FROM fiunc) = ?`
-
-        } else if (lugarI === '3') {
-            strqryW = ` WHERE EXTRACT(YEAR FROM fiapn) = ?`
-        }
-
-        const strquery = `${strqryC}${strqryI}${strqryW}`
-
         const db = await connect()
-        const [resu] = await db.query(strquery, [anioI])
+        const [resu] = await db.query(strquery, [anio])
         res.send(resu)
     } catch (error) {
         console.log(error)
+        res.status(500).json({ error: 'Error al consultar los ingresos' })
+    }
+}
+
+// Agentes con cargo vigente cuya antigüedad desde el ingreso (FCE, UNCuyo o APN)
+// es exactamente alguna de las pedidas a la fecha de corte.
+// GET /antiguedadIngreso?corte=2026-08-16&lugar=1&anios=25,30
+export const getAgentesAntiguedadIngreso = async (req, res) => {
+    const campos = { '1': 'fifce', '2': 'fiunc', '3': 'fiapn' }
+    const campo = campos[String(req.query.lugar ?? '1')]
+    const corte = String(req.query.corte ?? '')
+    const anios = String(req.query.anios ?? '').split(',').map(Number)
+    if (!campo || !/^\d{4}-\d{2}-\d{2}$/.test(corte) || Number.isNaN(Date.parse(corte))
+        || anios.length === 0 || anios.length > 10 || anios.some((a) => !Number.isInteger(a) || a < 1 || a > 60)) {
+        return res.status(400).json({ error: 'parámetros inválidos: corte yyyy-mm-dd, lugar 1, 2 o 3 y anios enteros entre 1 y 60' })
+    }
+
+    const strqry = `SELECT age.legajo, age.apellido, age.condicion,
+        DATE_FORMAT(da.fifce, "%d-%m-%Y") AS fechaIFCE, DATE_FORMAT(da.fiunc, "%d-%m-%Y") AS fechaIUNC,
+        DATE_FORMAT(da.fiapn, "%d-%m-%Y") AS fechaIAPN,
+        TIMESTAMPDIFF(YEAR, da.${campo}, ?) AS antiguedad,
+        DATE_FORMAT(DATE_ADD(da.${campo}, INTERVAL TIMESTAMPDIFF(YEAR, da.${campo}, ?) YEAR), "%d-%m-%Y") AS cumpleEl
+        FROM datos_rrhh AS da
+        INNER JOIN agentes AS age ON age.legajo = da.legajo
+        WHERE TIMESTAMPDIFF(YEAR, da.${campo}, ?) IN (?)
+        AND EXISTS (SELECT 1 FROM cargos AS c WHERE c.legajo = age.legajo AND c.vigente = 'S')
+        ORDER BY antiguedad DESC, da.${campo}, age.apellido`
+
+    try {
+        const db = await connect()
+        const [resu] = await db.query(strqry, [corte, corte, corte, anios])
+        res.send(resu)
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ error: 'Error al consultar la antigüedad' })
     }
 }
 
@@ -918,27 +952,31 @@ export const getAgentescumpleEdad = async (req, res) => {
 
 
 // Agentes con cargo vigente que cumplen alguna de las edades pedidas en el año
-// en curso (edad = año actual - año de nacimiento, igual que /cumpleEdad).
-// GET /cumplenEdades?edades=60,65,66,70
+// indicado, por defecto el en curso (edad = año - año de nacimiento, igual que /cumpleEdad).
+// GET /cumplenEdades?edades=60,65,66,70&anio=2027
 export const getAgentesCumplenEdades = async (req, res) => {
     const edades = String(req.query.edades ?? '').split(',').map(Number)
     if (edades.length === 0 || edades.length > 10 || edades.some((e) => !Number.isInteger(e) || e < 18 || e > 100)) {
         return res.status(400).json({ error: 'edades inválidas: lista de enteros entre 18 y 100 separados por coma' })
     }
+    const anio = req.query.anio === undefined ? new Date().getFullYear() : Number(req.query.anio)
+    if (!Number.isInteger(anio) || anio < 1950 || anio > 2100) {
+        return res.status(400).json({ error: 'anio inválido: entero entre 1950 y 2100' })
+    }
 
     const strqry = `SELECT age.legajo, age.apellido, age.condicion, da.sexo,
         DATE_FORMAT(da.fechnac, "%d-%m-%Y") AS fechaNac,
-        EXTRACT(YEAR FROM CURDATE()) - EXTRACT(YEAR FROM da.fechnac) AS edad,
+        ? - EXTRACT(YEAR FROM da.fechnac) AS edad,
         TIMESTAMPDIFF(YEAR, da.fechnac, CURDATE()) AS edadActual
         FROM datos_rrhh AS da
         INNER JOIN agentes AS age ON age.legajo = da.legajo
-        WHERE EXTRACT(YEAR FROM CURDATE()) - EXTRACT(YEAR FROM da.fechnac) IN (?)
+        WHERE ? - EXTRACT(YEAR FROM da.fechnac) IN (?)
         AND EXISTS (SELECT 1 FROM cargos AS c WHERE c.legajo = age.legajo AND c.vigente = 'S')
         ORDER BY edad, MONTH(da.fechnac), DAY(da.fechnac), age.apellido`
 
     try {
         const db = await connect()
-        const [resu] = await db.query(strqry, [edades])
+        const [resu] = await db.query(strqry, [anio, anio, edades])
         res.send(resu)
     } catch (error) {
         console.log(error)
