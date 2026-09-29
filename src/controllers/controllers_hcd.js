@@ -184,6 +184,10 @@ export const getCatedraIntegrantes = async (req, res) => {
             } else if (carrera === '7') {
                 strqy = `where inst='4' and car= ? and pl= ? and mat= ? order by cg.inst,cg.nv`
                 params = [carrera, pl, mat]
+            } else if (carrera === '9') {
+                // LGTO se dicta solo en Mendoza
+                strqy = `where inst='1' and car= ? and pl= ? and mat= ? order by cg.inst,cg.nv`
+                params = [carrera, pl, mat]
             } else {
                 strqy = `where inst= ? and car= ? and pl= ? and mat= ? order by cg.inst,cg.nv`
                 params = [sede, carrera, pl, mat]

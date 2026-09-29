@@ -1,5 +1,5 @@
 import { connect } from '../database.js';
-import { filtrarColumnasPermitidas } from '../utils/validaciones.js';
+import { filtrarColumnasPermitidas, validarFecha } from '../utils/validaciones.js';
 import { crearSubidorDocumento } from '../utils/subirDocumento.js';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -23,6 +23,7 @@ export const getSolicitudesPendientes = async (req, res) => {
     const strqry = `
         SELECT sj.id, sj.legajo, ag.apellido,
                DATE_FORMAT(sj.fecha_creacion, "%d-%m-%Y") as fecha,
+               DATE_FORMAT(sj.fecha_inicio, "%d-%m-%Y") as fechaInicio,
                sj.tipo, sj.codina, mo.Motivo as motivoDesc,
                sj.comunico, sj.observacion, sj.estado,
                sj.ruta_documento, sj.dias_solicitados, sj.cargo_id
@@ -47,10 +48,10 @@ export const getSolicitudesPendientes = async (req, res) => {
 // si el agente avisó o no a su jefe superior al momento del pedido.
 export const crearSolicitudJustificacion = async (req, res) => {
     try {
-        const { legajo, codina, cargo_id, tipo, comunico, observacion, dias_solicitados } = req.body;
+        const { legajo, codina, cargo_id, tipo, comunico, observacion, dias_solicitados, fecha_inicio } = req.body;
 
-        if (!legajo || !codina || !tipo || !comunico) {
-            return res.status(400).json({ error: 'legajo, codina, tipo y comunico son requeridos' });
+        if (!legajo || !codina || !tipo || !comunico || !fecha_inicio) {
+            return res.status(400).json({ error: 'legajo, codina, tipo, comunico y fecha_inicio son requeridos' });
         }
         if (!TIPOS_VALIDOS.includes(tipo)) {
             return res.status(400).json({ error: "tipo debe ser 'I' (Inasistencia) o 'L' (Licencia)" });
@@ -58,14 +59,31 @@ export const crearSolicitudJustificacion = async (req, res) => {
         if (!COMUNICO_VALIDOS.includes(comunico)) {
             return res.status(400).json({ error: "comunico debe ser 'S' o 'N'" });
         }
-
-        const query = `
-            INSERT INTO dbasistencia.solicitudes_justificacion (legajo, codina, cargo_id, tipo, comunico, observacion, dias_solicitados)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `;
-        const values = [legajo, codina, cargo_id ?? null, tipo, comunico, observacion ?? null, dias_solicitados ?? null];
+        if (!validarFecha(fecha_inicio)) {
+            return res.status(400).json({ error: 'fecha_inicio debe ser una fecha válida (aaaa-mm-dd)' });
+        }
 
         const db = await connect();
+
+        // Un mismo legajo no puede tener dos solicitudes pendientes que
+        // arranquen el mismo día, sin importar motivo/tipo/cargo. No se
+        // bloquea para siempre: se puede volver a pedir la misma fecha una
+        // vez que la anterior ya fue Aceptada/Rechazada/Cancelada.
+        const [pendientes] = await db.query(
+            `SELECT id FROM dbasistencia.solicitudes_justificacion
+             WHERE legajo = ? AND fecha_inicio = ? AND estado = 'P'`,
+            [legajo, fecha_inicio]
+        );
+        if (pendientes.length > 0) {
+            return res.status(409).json({ error: 'Ya existe una solicitud pendiente del mismo legajo con la misma fecha de inicio.' });
+        }
+
+        const query = `
+            INSERT INTO dbasistencia.solicitudes_justificacion (legajo, codina, cargo_id, tipo, comunico, observacion, dias_solicitados, fecha_inicio)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        const values = [legajo, codina, cargo_id ?? null, tipo, comunico, observacion ?? null, dias_solicitados ?? null, fecha_inicio];
+
         const [result] = await db.query(query, values);
 
         res.status(201).json({ message: 'Solicitud creada correctamente', id: result.insertId });
@@ -176,6 +194,16 @@ export const gestionarSolicitudJustificacion = async (req, res) => {
 
         let generado;
         if (sol.tipo === 'I') {
+            // Evita generar dos veces la misma inasistencia (mismo legajo,
+            // motivo, fechas y nro. de resolución).
+            const [dupIna] = await conn.query(
+                'SELECT id_ina FROM inasist WHERE nleg = ? AND fechcom = ? AND fechfin = ? AND mot = ? AND nres = ?',
+                [sol.legajo, fechaini, fechafin, motivo, resolucion]
+            );
+            if (dupIna.length > 0) {
+                await conn.rollback();
+                return res.status(409).json({ error: 'Ya existe una inasistencia cargada con el mismo legajo, motivo, fechas y nro. de resolución.' });
+            }
             const [ins] = await conn.query(
                 `INSERT INTO inasist (nleg, nc, mot, r, fechcom, fechfin, nres, estado) VALUES (?, ?, ?, ?, ?, ?, ?, 'A')`,
                 [sol.legajo, 999, motivo, nr, fechaini, fechafin, resolucion]
@@ -196,6 +224,19 @@ export const gestionarSolicitudJustificacion = async (req, res) => {
                 return res.status(400).json({ error: 'El cargo elegido no es un cargo vigente del agente' });
             }
             const { nc, ncg } = cargos[0];
+
+            // Evita cargar dos veces la misma licencia (mismo legajo, cargo
+            // completo -nc+ncg-, motivo, fechas y nro. de resolución) — se
+            // incluye nc+ncg porque una persona puede tener más de un cargo a
+            // la vez: la misma licencia en cargos distintos no es un duplicado.
+            const [dupLic] = await conn.query(
+                'SELECT row_id FROM licencia WHERE nleg = ? AND nc = ? AND ncg = ? AND fechcom = ? AND fechfin = ? AND mot = ? AND nres = ?',
+                [sol.legajo, nc, ncg, fechaini, fechafin, motivo, resolucion]
+            );
+            if (dupLic.length > 0) {
+                await conn.rollback();
+                return res.status(409).json({ error: 'Ya existe una licencia cargada con el mismo legajo, cargo, motivo, fechas y nro. de resolución.' });
+            }
             const [ins] = await conn.query(
                 `INSERT INTO licencia (nleg, nc, mot, r, fechcom, fechfin, nres, ncg, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [sol.legajo, nc, motivo, nr, fechaini, fechafin, resolucion, ncg, sol.observacion ?? null]

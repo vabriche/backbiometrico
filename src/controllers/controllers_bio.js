@@ -329,6 +329,51 @@ export const getInasistenciasPeriodo = async (req, res) => {
 
 }
 
+// Informe mensual de licencias, justificaciones y franquicias: todo lo que se
+// superpone con el mes (inasistencias, licencias y partes médicos todavía sin
+// registrar como inasistencia). claustro = condicion del agente ('1' docente,
+// '2' no docente); en un parte de alguien que no está en agentes, sale del decreto.
+// GET /informeMensual/2026/8
+export const getInformeMensual = async (req, res) => {
+    const anio = Number(req.params.anio)
+    const mes = Number(req.params.mes)
+    if (!Number.isInteger(anio) || anio < 2000 || anio > 2100 || !Number.isInteger(mes) || mes < 1 || mes > 12) {
+        return res.status(400).json({ error: 'año o mes inválido' })
+    }
+    const inicio = `${anio}-${String(mes).padStart(2, '0')}-01`
+    const strqry = `
+        SELECT 'I' AS origen, i.id_ina AS id, i.nleg AS legajo, a.apellido, a.condicion AS claustro,
+            CAST(i.mot AS UNSIGNED) AS mot, DATE_FORMAT(i.fechcom, "%Y-%m-%d") AS fechai, DATE_FORMAT(i.fechfin, "%Y-%m-%d") AS fechaf,
+            i.nres, COALESCE(
+                (SELECT pm.cod_parte FROM partes_medicos pm WHERE pm.id_ina_generada = i.id_ina LIMIT 1),
+                (SELECT pm.cod_parte FROM partes_medicos pm WHERE pm.legajo = i.nleg AND pm.fecha_inicio = i.fechcom AND pm.fecha_fin = i.fechfin LIMIT 1)
+            ) AS codParte
+        FROM inasist i INNER JOIN agentes a ON a.legajo = i.nleg
+        WHERE i.fechcom <= LAST_DAY(?) AND i.fechfin >= ?
+        UNION ALL
+        SELECT 'L', l.row_id, l.nleg, a.apellido, a.condicion,
+            CAST(l.mot AS UNSIGNED), DATE_FORMAT(l.fechcom, "%Y-%m-%d"), DATE_FORMAT(l.fechfin, "%Y-%m-%d"), l.nres, NULL
+        FROM licencia l INNER JOIN agentes a ON a.legajo = l.nleg
+        WHERE l.fechcom <= LAST_DAY(?) AND l.fechfin >= ?
+        UNION ALL
+        SELECT 'P', pm.id, pm.legajo, COALESCE(a.apellido, pm.apellido_nombre),
+            COALESCE(a.condicion, CASE WHEN pm.decreto LIKE '%1246%' THEN '1' WHEN pm.decreto LIKE '%366%' THEN '2' END),
+            pm.motivo_cod, DATE_FORMAT(pm.fecha_inicio, "%Y-%m-%d"), DATE_FORMAT(pm.fecha_fin, "%Y-%m-%d"), NULL, pm.cod_parte
+        FROM partes_medicos pm LEFT JOIN agentes a ON a.legajo = pm.legajo
+        WHERE pm.registrado = 'N' AND pm.fecha_inicio <= LAST_DAY(?) AND pm.fecha_fin >= ?
+        AND NOT EXISTS (SELECT 1 FROM inasist i WHERE i.nleg = pm.legajo AND i.fechcom = pm.fecha_inicio AND i.fechfin = pm.fecha_fin)
+        ORDER BY apellido, fechai`
+
+    try {
+        const db = await connect()
+        const [rows] = await db.query(strqry, [inicio, inicio, inicio, inicio, inicio, inicio])
+        res.send(rows)
+    } catch (error) {
+        console.log(error)
+        res.status(500).json({ error: 'Error al armar el informe mensual' })
+    }
+}
+
 //inasistencias total anio 02/04/32
 export const getInasistenciasRpEs = async (req, res) => {
 

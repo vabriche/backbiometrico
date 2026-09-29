@@ -19,6 +19,7 @@ import {
   updateAsistencia,
   getInasistenciasPeriodo,
   getLicenciasPeriodo,
+  getInformeMensual,
   getInasistenciasRpEs,
   buscarAusentes,
   getAsistenciadia,
@@ -78,6 +79,7 @@ router.get("/insasisteciasres/:legajo/:fecha_i/:fecha_f", getInasistenciasRpEs);
 router.get("/inasistenciasF/:leg/:fecha_i/:fecha_f", getInasistencias_fechas);
 router.get("/inasistencias/:fecha_i/:fecha_f", getInasistenciasPeriodo);
 router.get("/licencias/:fecha_i/:fecha_f", getLicenciasPeriodo);
+router.get("/informeMensual/:anio/:mes", getInformeMensual);
 //router.put('/acreditarhoras/:legajo/:nroregistro', acreditarHorarioVirtual)
 
 router.get("/getausentes/:fecha", buscarAusentes);

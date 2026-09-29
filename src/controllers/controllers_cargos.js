@@ -672,12 +672,25 @@ export const NewInasistencia = async (req, res) => {
 
     try {
         const { legajo, ncargo, motivo, nr, fechaini, fechafin, nrores, estado } = req.body
-        const sqli = 'INSERT INTO inasist(nleg,nc,mot,r,fechcom,fechfin,nres, estado) VALUES(?,?,?,?,?,?,?,?)'
         const db = await connect()
+
+        // Evita cargar dos veces la misma inasistencia (mismo legajo, motivo,
+        // fechas y nro. de resolución/parte) — se vieron casos así duplicados
+        // en producción.
+        const [existentes] = await db.query(
+            'SELECT id_ina FROM inasist WHERE nleg = ? AND fechcom = ? AND fechfin = ? AND mot = ? AND nres = ?',
+            [legajo, fechaini, fechafin, motivo, nrores]
+        )
+        if (existentes.length > 0) {
+            return res.status(409).json({ error: 'Ya existe una inasistencia cargada con el mismo legajo, motivo, fechas y nro. de resolución/parte.' })
+        }
+
+        const sqli = 'INSERT INTO inasist(nleg,nc,mot,r,fechcom,fechfin,nres, estado) VALUES(?,?,?,?,?,?,?,?)'
         const resu = await db.query(sqli, [legajo, ncargo, motivo, nr, fechaini, fechafin, nrores, estado])
         res.send(resu)
     } catch (error) {
-        console.log(error)
+        console.error('Error al crear la inasistencia:', error)
+        res.status(500).json({ error: 'Error al crear la inasistencia' })
     }
 }
 
@@ -778,16 +791,30 @@ export const NewLicencia = async (req, res) => {
             return res.status(400).json({ error: 'Todos los campos son requeridos' });
         }
 
+        // Conectar a la base de datos
+        const db = await connect();
+
+        // Evita cargar dos veces la misma licencia (mismo legajo, cargo
+        // completo -nc+ncg-, motivo, fechas y nro. de resolución) — se vieron
+        // casos así duplicados en producción. Se incluye nc+ncg porque una
+        // persona puede tener más de un cargo a la vez: la misma licencia en
+        // cargos distintos no es un duplicado.
+        const [existentes] = await db.query(
+            'SELECT row_id FROM licencia WHERE nleg = ? AND nc = ? AND ncg = ? AND fechcom = ? AND fechfin = ? AND mot = ? AND nres = ?',
+            [legajo, ncargo, ncgen, fechaini, fechafin, motivo, nrores]
+        );
+        if (existentes.length > 0) {
+            return res.status(409).json({ error: 'Ya existe una licencia cargada con el mismo legajo, cargo, motivo, fechas y nro. de resolución.' });
+        }
+
         // Preparar la consulta usando parámetros preparados
         const query = `
-            INSERT INTO licencia (nleg, nc, mot, r, fechcom, fechfin, nres, ncg, observaciones) 
+            INSERT INTO licencia (nleg, nc, mot, r, fechcom, fechfin, nres, ncg, observaciones)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        
+
         const values = [legajo, ncargo, motivo, nr, fechaini, fechafin, nrores, ncgen, observaciones];
 
-        // Conectar a la base de datos y ejecutar la consulta
-        const db = await connect();
         const [result] = await db.query(query, values);
 
         // Llamar a modiCargolic después de insertar la licencia

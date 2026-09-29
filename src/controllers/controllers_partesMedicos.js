@@ -443,13 +443,27 @@ export const gestionarParte = async (req, res) => {
       // Fechas ISO (yyyy-mm-dd): comparar como texto equivale a comparar fechas.
       const fechaCom = abierto && parte.ff < parte.fi ? parte.ff : parte.fi;
       const fechaFin = abierto ? (parte.ff < parte.fi ? parte.fi : parte.ff) : parte.ff;
-      const [ins] = await conn.query(
-        `INSERT INTO inasist (nleg, nc, mot, r, fechcom, fechfin, nres, estado)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [parte.legajo, 999, motivoInasistencia(parte.motivo_cod), nr, fechaCom, fechaFin,
-          String(parte.cod_parte), abierto ? 'P' : 'A']
+      const motivoIna = motivoInasistencia(parte.motivo_cod);
+
+      // Chequeo defensivo extra (además de buscarInasistenciaManual arriba):
+      // si por lo que sea ya existe una inasistencia idéntica, se enlaza esa
+      // en vez de crear otra — se vieron partes duplicados en producción.
+      const [dupCheck] = await conn.query(
+        'SELECT id_ina FROM inasist WHERE nleg = ? AND fechcom = ? AND fechfin = ? AND mot = ? AND nres = ?',
+        [parte.legajo, fechaCom, fechaFin, motivoIna, String(parte.cod_parte)]
       );
-      idIna = ins.insertId;
+
+      if (dupCheck.length > 0) {
+        idIna = dupCheck[0].id_ina;
+      } else {
+        const [ins] = await conn.query(
+          `INSERT INTO inasist (nleg, nc, mot, r, fechcom, fechfin, nres, estado)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [parte.legajo, 999, motivoIna, nr, fechaCom, fechaFin,
+            String(parte.cod_parte), abierto ? 'P' : 'A']
+        );
+        idIna = ins.insertId;
+      }
       registradoNuevo = abierto ? 'P' : 'S';
     }
 
