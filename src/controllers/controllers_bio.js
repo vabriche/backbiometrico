@@ -367,6 +367,13 @@ export const getInformeMensual = async (req, res) => {
     try {
         const db = await connect()
         const [rows] = await db.query(strqry, [inicio, inicio, inicio, inicio, inicio, inicio])
+        // en las inasistencias con parte médico cargadas a mano, el nro. de parte
+        // está en nres ("110213" o "Parte 100917")
+        const CON_PARTE = [5, 6, 9, 10, 17, 30, 38]
+        for (const r of rows) {
+            const nro = String(r.nres ?? '').match(/^\s*(?:parte\s*)?(\d{5,7})\s*$/i)
+            if (r.origen === 'I' && !r.codParte && CON_PARTE.includes(Number(r.mot)) && nro) r.codParte = nro[1]
+        }
         res.send(rows)
     } catch (error) {
         console.log(error)
