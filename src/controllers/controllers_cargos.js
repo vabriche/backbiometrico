@@ -522,11 +522,29 @@ export const createCargoNuevo = async (req, res) => {
     try {
         const { legajo, ncargo, sede, tcargo, claustro, ppal, nivel, adic, plan, codmat, fechaA, nroresA, fechaB, ncg, titu, car, rempl, st , observaciones} = req.body
 
+        const db = await connect()
+
+        // Evita cargar dos veces exactamente el mismo cargo. Ojo: (legajo, nc,
+        // ncg) NO alcanza como clave acá — un mismo cargo cubre varias
+        // materias (car/pl/mat) y se renueva período a período con distintas
+        // fechas/resolución, así que eso es normal y no es un duplicado. Solo
+        // se bloquea si TODOS los campos coinciden (clon exacto).
+        const [existentes] = await db.query(
+            `SELECT row_id FROM cargos
+             WHERE legajo <=> ? AND nc <=> ? AND inst <=> ? AND ca <=> ? AND es <=> ? AND ppal <=> ?
+               AND nv <=> ? AND pl <=> ? AND mat <=> ? AND fechalt <=> ? AND nresa <=> ? AND adic <=> ?
+               AND titular <=> ? AND ncg <=> ? AND fechbaj <=> ? AND car <=> ? AND rempla <=> ?
+               AND st <=> ? AND observaciones <=> ?`,
+            [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic,
+                titu, ncg, fechaB || null, car, rempl, st, observaciones]
+        )
+        if (existentes.length > 0) {
+            return res.status(409).json({ error: 'Ya existe un cargo idéntico cargado (mismo legajo, cargo, período y resolución).' })
+        }
 
         const strqry = "INSERT INTO cargos (legajo,nc,inst,ca,es,ppal,nv,pl,mat,fechalt,nresa,adic,titular,ncg,fechbaj,car,rempla,st, observaciones) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         const params = [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic, titu, ncg, fechaB || null, car, rempl, st, observaciones]
 
-        const db = await connect()
         const resu = await db.query(strqry, params)
 
         res.send(resu)
@@ -545,11 +563,27 @@ export const createCargoNuevoHist = async (req, res) => {
     try {
         const { legajo, ncargo, sede, tcargo, claustro, ppal, nivel, adic, plan, codmat, fechaA, nroresA, fechaB, nroresB, ncg, titu, car, motbj, sit, rempl, observaciones } = req.body
 
+        const db = await connect()
+
+        // Mismo criterio que createCargoNuevo: (legajo, nc, ncg) no alcanza
+        // como clave (un cargo histórico cubre varias materias y períodos
+        // legítimamente repetidos); solo se bloquea si es un clon exacto.
+        const [existentes] = await db.query(
+            `SELECT row_id FROM cargoant
+             WHERE legajo <=> ? AND nc <=> ? AND inst <=> ? AND ca <=> ? AND es <=> ? AND ppal <=> ?
+               AND nv <=> ? AND pl <=> ? AND mat <=> ? AND fechalt <=> ? AND nresa <=> ? AND adic <=> ?
+               AND titular <=> ? AND ncg <=> ? AND fechbaj <=> ? AND nresb <=> ? AND car <=> ?
+               AND st <=> ? AND mb <=> ? AND rempla <=> ? AND observaciones <=> ?`,
+            [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic,
+                titu, ncg, fechaB || null, nroresB, car, sit, motbj, rempl, observaciones]
+        )
+        if (existentes.length > 0) {
+            return res.status(409).json({ error: 'Ya existe un cargo histórico idéntico cargado (mismo legajo, cargo, período y resolución).' })
+        }
 
         const strqry = "INSERT INTO cargoant (legajo,nc,inst,ca,es,ppal,nv,pl,mat,fechalt,nresa,adic,titular,ncg,fechbaj,nresb,car,st,mb,rempla, observaciones) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         const params = [legajo, ncargo, sede, tcargo, claustro, ppal, nivel, plan, codmat, fechaA, nroresA, adic, titu, ncg, fechaB || null, nroresB, car, sit, motbj, rempl, observaciones]
 
-        const db = await connect()
         const resu = await db.query(strqry, params)
 
         res.send(resu)
