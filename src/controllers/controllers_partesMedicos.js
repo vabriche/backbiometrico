@@ -69,8 +69,14 @@ const ALIAS_MOTIVOS = {
   'post-maternidad': 'postmaternidad',
 };
 
+// Sin mayúsculas, acentos ni espacios de más: una tilde o un doble espacio en
+// el Excel (o en motina) no tiene que dejar el parte sin motivo.
+const claveMotivo = (texto) => String(texto ?? '')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/\s+/g, ' ').trim();
+
 const normalizarMotivo = (motivoTexto) => {
-  const clave = String(motivoTexto || '').trim().toLowerCase();
+  const clave = claveMotivo(motivoTexto);
   return ALIAS_MOTIVOS[clave] || clave;
 };
 
@@ -78,9 +84,23 @@ const cargarMapaMotivos = async (db) => {
   const [rows] = await db.query('SELECT codina, Motivo FROM motina');
   const map = new Map();
   for (const r of rows) {
-    map.set(String(r.Motivo).trim().toLowerCase(), r.codina);
+    map.set(claveMotivo(r.Motivo), r.codina);
   }
   return map;
+};
+
+// Respaldo cuando el texto del motivo no se reconoce: el motivo que corresponde
+// al decreto + artículo del parte. [decreto, artículo (número e inciso), codina]
+const MOTIVO_POR_ARTICULO = [
+  ['1246', '46 a', 6], ['1246', '46 c', 5], ['1246', '48 a', 9], ['1246', '48 b', 38], ['1246', '48 g', 10],
+  ['366', '91', 6], ['366', '93', 5], ['366', '95', 17], ['366', '104', 10],
+];
+
+const motivoPorArticulo = (decreto, articuloInciso) => {
+  // "46º a)" -> "46 a"; "104°" -> "104"
+  const articulo = claveMotivo(articuloInciso).replace(/[^0-9a-z]+/g, ' ').trim();
+  const fila = MOTIVO_POR_ARTICULO.find(([d, a]) => String(decreto ?? '').includes(d) && articulo === a);
+  return fila ? fila[2] : null;
 };
 
 const existeAgente = async (db, legajo) => {
@@ -195,9 +215,10 @@ export const importarPartesMedicos = async (req, res) => {
       const codParte = parseInt(codParteRaw, 10);
       if (!legajo || !codParte) continue;
 
-      const motivoCod = mapaMotivos.get(normalizarMotivo(motivoTexto)) || null;
+      const motivoCod = mapaMotivos.get(normalizarMotivo(motivoTexto))
+        || motivoPorArticulo(decreto, articuloInciso) || null;
       if (!motivoCod) {
-        motivosSinMapear.push({ codParte, motivoTexto });
+        motivosSinMapear.push({ codParte, legajo, motivoTexto, decreto, articuloInciso });
       }
 
       if (!(await existeAgente(db, legajo))) {
@@ -206,7 +227,7 @@ export const importarPartesMedicos = async (req, res) => {
       }
 
       const [existentes] = await db.query(
-        'SELECT estado, fecha_inicio, fecha_fin, dias FROM partes_medicos WHERE cod_parte = ?',
+        'SELECT estado, fecha_inicio, fecha_fin, dias, motivo_cod FROM partes_medicos WHERE cod_parte = ?',
         [codParte]
       );
 
@@ -229,6 +250,10 @@ export const importarPartesMedicos = async (req, res) => {
         );
         insertados++;
       } else {
+        // un parte que había quedado sin motivo se completa si ahora se reconoce
+        if (!existentes[0].motivo_cod && motivoCod) {
+          await db.query('UPDATE partes_medicos SET motivo_cod = ? WHERE cod_parte = ?', [motivoCod, codParte]);
+        }
         const estadoActual = existentes[0].estado;
         if (estadoActual === 'A' && estado === 'C') {
           // Al cerrarse el parte, Sanidad puede haber corregido el rango de
@@ -370,7 +395,9 @@ const buscarInasistenciaManual = async (conn, legajo, codParte) => {
 // Abierto y ya 'P' no tiene nada para hacer hasta que el parte cierre.
 export const gestionarParte = async (req, res) => {
   const { codParte } = req.params;
-  const { nr } = req.body; // afectación de haberes: 'CG' (sin afectación) o 'SG' (con afectación)
+  // nr = afectación de haberes: 'CG' (sin afectación) o 'SG' (con afectación).
+  // motivo_cod = motivo elegido por el usuario; solo se usa si el parte quedó sin motivo al importarlo.
+  const { nr, motivo_cod: motivoElegido } = req.body;
 
   const db = await connect();
   const conn = await db.getConnection();
@@ -406,6 +433,10 @@ export const gestionarParte = async (req, res) => {
       // Abierto queda Parcial: al cerrar, la rama 'P' completa esa misma inasistencia.
       idIna = inasistenciaManual.id_ina;
       registradoNuevo = parte.estado === 'A' ? 'P' : 'S';
+      // un parte que quedó sin motivo al importarlo toma el de la inasistencia ya cargada
+      if (!parte.motivo_cod && Number(inasistenciaManual.mot) > 0) {
+        await conn.query('UPDATE partes_medicos SET motivo_cod = ? WHERE cod_parte = ?', [Number(inasistenciaManual.mot), parte.cod_parte]);
+      }
       if (registradoNuevo === 'P') {
         // Igual que las que crea el sistema para un parte abierto: Pendiente hasta que cierre.
         await conn.query(`UPDATE inasist SET estado = 'P' WHERE id_ina = ?`, [idIna]);
@@ -432,8 +463,15 @@ export const gestionarParte = async (req, res) => {
       registradoNuevo = 'S';
     } else {
       if (!parte.motivo_cod) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'El parte no tiene un motivo mapeado; no se puede generar la inasistencia.' });
+        const [motivos] = motivoElegido
+          ? await conn.query('SELECT codina FROM motina WHERE codina = ?', [motivoElegido])
+          : [[]];
+        if (motivos.length === 0) {
+          await conn.rollback();
+          return res.status(400).json({ error: 'El parte no tiene un motivo mapeado; elegí el motivo para generar la inasistencia.' });
+        }
+        parte.motivo_cod = motivos[0].codina;
+        await conn.query('UPDATE partes_medicos SET motivo_cod = ? WHERE cod_parte = ?', [parte.motivo_cod, parte.cod_parte]);
       }
       if (!['CG', 'SG'].includes(nr)) {
         await conn.rollback();
