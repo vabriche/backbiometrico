@@ -38,6 +38,8 @@ import {
   getLicenciasAgente,
   getLugarNac,
   getMotivosInasistencias,
+  crearMotivoInasistencia,
+  modiMotivoInasistencia,
   getTitulos,
   grabarEstablecimiento,
   grabarInstitucion,
@@ -81,6 +83,8 @@ router.get("/cargosinterinos", getCargosVigentesInterinos);
 router.get("/cargosinterinosND", getCargosVigentesInterinosND);
 
 router.get("/motina", getMotivosInasistencias);
+router.post("/motina", crearMotivoInasistencia);
+router.put("/motina/:codina", modiMotivoInasistencia);
 
 //manejo agentes
 router.post("/addAgente", newAgente);

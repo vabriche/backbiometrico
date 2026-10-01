@@ -17,6 +17,7 @@ const COLUMNAS_ESTUDIO = ['tipotitulo', 'estado', 'titulo', 'institucion', 'adic
 const COLUMNAS_INSTITUCION = ['nombre', 'codigoI'];
 const COLUMNAS_ESTABLECIMIENTO = ['institucion', 'nombre'];
 const COLUMNAS_TITULO = ['nombre'];
+const COLUMNAS_MOTINA = ['Motivo', 'decres_nd', 'decres_d'];
 
 // funciones complementarias
 
@@ -637,7 +638,7 @@ export const updateCargoH = async (req, res) => {
 //buscar motivos inasistencias
 export const getMotivosInasistencias = async (req, res) => {
 
-    let strqry = 'SELECT * FROM motina'
+    const strqry = 'SELECT codina, Motivo, decres_nd, decres_d FROM motina ORDER BY codina'
     try {
         const db = await connect()
         const [rows] = await db.query(strqry)
@@ -646,6 +647,83 @@ export const getMotivosInasistencias = async (req, res) => {
         console.log(error)
     }
 
+}
+
+// Alta de un motivo de inasistencia. `codina` no es autoincremental en la
+// tabla, así que se calcula el siguiente libre acá (evita que el cliente
+// tenga que adivinarlo o pise uno existente). Se bloquea si ya existe un
+// motivo con el mismo texto (case-insensitive) — esta tabla se usa para
+// mapear por texto en otros lados (ver controllers_partesMedicos.js), así
+// que un texto repetido ahí sería una fuente de errores.
+export const crearMotivoInasistencia = async (req, res) => {
+    try {
+        const { Motivo, decres_nd, decres_d } = req.body
+        const motivo = String(Motivo || '').trim()
+        if (!motivo) {
+            return res.status(400).json({ error: 'Motivo es requerido' })
+        }
+
+        const db = await connect()
+
+        const [existentes] = await db.query(
+            'SELECT codina FROM motina WHERE LOWER(TRIM(Motivo)) = LOWER(?)',
+            [motivo]
+        )
+        if (existentes.length > 0) {
+            return res.status(409).json({ error: `Ya existe un motivo igual (codina ${existentes[0].codina}).` })
+        }
+
+        const [[{ siguiente }]] = await db.query('SELECT COALESCE(MAX(codina), 0) + 1 AS siguiente FROM motina')
+
+        await db.query(
+            'INSERT INTO motina (codina, Motivo, decres_nd, decres_d) VALUES (?, ?, ?, ?)',
+            [siguiente, motivo, decres_nd ?? null, decres_d ?? null]
+        )
+
+        res.status(201).json({ message: 'Motivo creado correctamente', codina: siguiente })
+    } catch (error) {
+        console.error('Error al crear el motivo de inasistencia:', error)
+        res.status(500).json({ error: 'Error al crear el motivo' })
+    }
+}
+
+// Modificación de un motivo existente (Motivo, decres_nd, decres_d).
+export const modiMotivoInasistencia = async (req, res) => {
+    try {
+        const { codina } = req.params
+        const cambios = filtrarColumnasPermitidas(req.body, COLUMNAS_MOTINA)
+
+        if (Object.keys(cambios).length === 0) {
+            return res.status(400).json({ error: 'No se recibieron campos para modificar' })
+        }
+
+        const db = await connect()
+
+        if (cambios.Motivo !== undefined) {
+            const motivo = String(cambios.Motivo || '').trim()
+            if (!motivo) {
+                return res.status(400).json({ error: 'Motivo no puede quedar vacío' })
+            }
+            cambios.Motivo = motivo
+
+            const [existentes] = await db.query(
+                'SELECT codina FROM motina WHERE LOWER(TRIM(Motivo)) = LOWER(?) AND codina <> ?',
+                [motivo, codina]
+            )
+            if (existentes.length > 0) {
+                return res.status(409).json({ error: `Ya existe otro motivo igual (codina ${existentes[0].codina}).` })
+            }
+        }
+
+        const [resu] = await db.query('UPDATE motina SET ? WHERE codina = ?', [cambios, codina])
+        if (resu.affectedRows === 0) {
+            return res.status(404).json({ error: 'Motivo no encontrado' })
+        }
+        res.status(200).json({ message: 'Motivo actualizado correctamente' })
+    } catch (error) {
+        console.error('Error al modificar el motivo de inasistencia:', error)
+        res.status(500).json({ error: 'Error al modificar el motivo' })
+    }
 }
 
 

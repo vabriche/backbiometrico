@@ -1,0 +1,16 @@
+#
+PORTSERVER = '4000'
+#DB_HOST = '200.12.136.74'
+DB_HOST = '127.0.0.1'
+#DB_USER = 'alfredo'
+DB_USER = 'root'
+DB_PASSWORD ='guni1233'
+#DB_PASSWORD ='alfre0710fce2026_prg'
+DB_PORT = '3306'
+DB_DATABASE = 'dbasistencia'
+
+PRIVATE_KEY_JWT='p5p2G3m4z1812fcechediack2026'
+
+FIREBASE_SERVICE_ACCOUNT_PATH='./firebase-service-account.json'
+
+EXCEL_DRIVE_FILE_ID='1wOjaDptdomxQenWX9izLdRTQDo7h89PK'
