@@ -1408,10 +1408,16 @@ export const traerControlAsistenciaPersonal = async (req, res) => {
     const [inasistencias] = await db.query(sqlInasist, [legajos, fechaConsulta, fechaConsulta]);
 
     const inasistPorLegajo = {};
+    // Permiso excepcional (art. 102, motivo 32): el agente puede haber marcado
+    // la entrada y retirarse antes, así que se informa aunque tenga registros
+    const permisoPorLegajo = {};
     inasistencias.forEach(i => {
       // Si hubiera más de una inasistencia solapada, nos quedamos con la primera encontrada
       if (!inasistPorLegajo[i.nleg]) {
         inasistPorLegajo[i.nleg] = i;
+      }
+      if (i.mot === '32' && !permisoPorLegajo[i.nleg]) {
+        permisoPorLegajo[i.nleg] = i;
       }
     });
 
@@ -1455,10 +1461,20 @@ export const traerControlAsistenciaPersonal = async (req, res) => {
         }];
       }
 
-      // Uno o más registros ese día (ej. turno mañana y turno tarde): una fila por cada uno
-      return registros.map(registro => {
+      // Uno o más registros ese día (ej. turno mañana y turno tarde): una fila por cada uno.
+      // Si tiene permiso excepcional, se informa en el último registro (el del retiro).
+      const permiso = permisoPorLegajo[agente.legajo];
+      return registros.map((registro, idx) => {
         const tieneEntrada = !esVacio(registro.Hentrada);
         const tieneSalida = !esVacio(registro.Hsalida);
+        const conPermiso = permiso && idx === registros.length - 1;
+
+        let observacion = (tieneEntrada && tieneSalida) ? '' : 'se ha omitido un registro';
+        if (conPermiso) {
+          observacion = permiso.estado === 'P'
+            ? 'se retiró con permiso excepcional (art. 102) pendiente'
+            : 'se retiró con permiso excepcional (art. 102)';
+        }
 
         return {
           legajo: agente.legajo,
@@ -1466,9 +1482,9 @@ export const traerControlAsistenciaPersonal = async (req, res) => {
           Hentrada: registro.Hentrada,
           Hsalida: registro.Hsalida,
           cantidadHoras: formatearHorasTrabajadas(registro.cantidadHoras, registro.Hentrada, registro.Hsalida),
-          mot: '',
-          estado: '',
-          observacion: (tieneEntrada && tieneSalida) ? '' : 'se ha omitido un registro'
+          mot: conPermiso ? permiso.mot : '',
+          estado: conPermiso && permiso.estado === 'P' ? 'P' : '',
+          observacion
         };
       });
     });
