@@ -1495,3 +1495,65 @@ export const traerControlAsistenciaPersonal = async (req, res) => {
     res.status(500).json({ error: "Error en la consulta", details: err.message });
   }
 };
+
+
+/**
+ * Verifica si en la última jornada con actividad (anterior a hoy)
+ * el agente registró entrada pero olvidó registrar salida.
+ */
+export const getAlertaSalida = async (req, res) => {
+  const { legajo } = req.params;
+  try {
+    const db = await connect();
+
+    // Obtener la condición del agente (1: Docente, 2: No Docente / Apoyo)
+    const [agenteRows] = await db.query(
+      'SELECT condicion FROM dbasistencia.agentes WHERE legajo = ?',
+      [legajo]
+    );
+
+    if (!agenteRows || agenteRows.length === 0) {
+      return res.status(404).json({ error: 'Agente no encontrado' });
+    }
+
+    const condicion = agenteRows[0].condicion;
+    const tabla = String(condicion) === '1' ? 'registroasistenciad' : 'registroasistenciand';
+
+    // Buscar el último registro de asistencia con fecha anterior a hoy
+    const [regRows] = await db.query(
+      `SELECT nroregistro,
+              DATE_FORMAT(fecha, '%d-%m-%Y') as fecha_formateada,
+              DATE_FORMAT(fecha, '%Y-%m-%d') as fecha_iso,
+              Hentrada,
+              Hsalida
+       FROM dbasistencia.${tabla}
+       WHERE legajo = ? AND fecha < CURDATE()
+       ORDER BY fecha DESC, nroregistro DESC
+       LIMIT 1`,
+      [legajo]
+    );
+
+    if (!regRows || regRows.length === 0) {
+      return res.json({ alertaOlvidoSalida: false });
+    }
+
+    const ultimoReg = regRows[0];
+    const tieneEntrada = ultimoReg.Hentrada && ultimoReg.Hentrada !== '' && ultimoReg.Hentrada !== 'X';
+    const faltaSalida = !ultimoReg.Hsalida || ultimoReg.Hsalida === '' || ultimoReg.Hsalida === 'X';
+
+    if (tieneEntrada && faltaSalida) {
+      return res.json({
+        alertaOlvidoSalida: true,
+        fecha: ultimoReg.fecha_formateada,
+        fechaIso: ultimoReg.fecha_iso,
+        hentrada: ultimoReg.Hentrada,
+        nroregistro: ultimoReg.nroregistro,
+      });
+    }
+
+    return res.json({ alertaOlvidoSalida: false });
+  } catch (error) {
+    console.error('Error al verificar alerta de salida:', error);
+    res.status(500).json({ error: 'Error al verificar alerta de salida' });
+  }
+};

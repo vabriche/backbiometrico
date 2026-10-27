@@ -30,6 +30,7 @@ import {
   getLicenciasHistoricas,
   traerControlAsistenciaPersonal,
   resetPassAgente,
+  getAlertaSalida,
 } from "../controllers/controllers_bio.js";
 
 import { Router } from "express";
@@ -97,5 +98,7 @@ router.get('/licenciasHist/:leg', getLicenciasHistoricas)
 
 //
 router.get('/getpersofce/:nrodocumento', getAgenteApp)
+// Alerta de última asistencia con entrada pero sin salida
+router.get("/alerta_salida/:legajo", getAlertaSalida);
 
 export default router;

@@ -23,6 +23,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.4.0",
     "mysql2": "^3.9.7",
+    "swagger-ui-express": "^5.0.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
   },
   "devDependencies": {

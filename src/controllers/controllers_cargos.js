@@ -1542,6 +1542,7 @@ export const buscarAntiguedadvaca =async (req,res)=>{
 
 
 
+
 ///////
 //cargar licencias
 export const newRegistroRRHH = async (req, res) => {

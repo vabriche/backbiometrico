@@ -169,6 +169,7 @@ router.delete("/delTitulo/:id", deleteTitulo);
 
 //
 router.get("/datosVaca/:legajo", buscarAntiguedadvaca);
+// Licencias anuales: ver routes_vacaciones.js (/vacaciones)
 
 
 //registros varios cambio titularidad y otros

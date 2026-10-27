@@ -23,10 +23,12 @@ export const getSolicitudesPendientes = async (req, res) => {
     const strqry = `
         SELECT sj.id, sj.legajo, ag.apellido,
                DATE_FORMAT(sj.fecha_creacion, "%d-%m-%Y") as fecha,
-               DATE_FORMAT(sj.fecha_inicio, "%d-%m-%Y") as fechaInicio,
+               DATE_FORMAT(sj.fecha_inicio, "%d-%m-%Y") as fecha_inicio,
+               DATE_FORMAT(sj.fecha_fin, "%d-%m-%Y") as fecha_fin,
+               sj.cantidad_dias,
                sj.tipo, sj.codina, mo.Motivo as motivoDesc,
                sj.comunico, sj.observacion, sj.estado,
-               sj.ruta_documento, sj.dias_solicitados, sj.cargo_id
+               sj.documento, sj.cargo_id
         FROM dbasistencia.solicitudes_justificacion sj
         LEFT JOIN agentes ag ON ag.legajo = sj.legajo
         LEFT JOIN motina mo ON mo.codina = sj.codina
@@ -48,7 +50,9 @@ export const getSolicitudesPendientes = async (req, res) => {
 // si el agente avisó o no a su jefe superior al momento del pedido.
 export const crearSolicitudJustificacion = async (req, res) => {
     try {
-        const { legajo, codina, cargo_id, tipo, comunico, observacion, dias_solicitados, fecha_inicio } = req.body;
+        const { legajo, codina, cargo_id, tipo, comunico, observacion, fecha_inicio, fecha_fin } = req.body;
+        // `dias_solicitados` es el nombre anterior de cantidad_dias (se acepta por compatibilidad)
+        const cantidad_dias = req.body.cantidad_dias ?? req.body.dias_solicitados ?? null;
 
         if (!legajo || !codina || !tipo || !comunico || !fecha_inicio) {
             return res.status(400).json({ error: 'legajo, codina, tipo, comunico y fecha_inicio son requeridos' });
@@ -61,6 +65,12 @@ export const crearSolicitudJustificacion = async (req, res) => {
         }
         if (!validarFecha(fecha_inicio)) {
             return res.status(400).json({ error: 'fecha_inicio debe ser una fecha válida (aaaa-mm-dd)' });
+        }
+        if (fecha_fin != null && (!validarFecha(fecha_fin) || fecha_fin < fecha_inicio)) {
+            return res.status(400).json({ error: 'fecha_fin debe ser una fecha válida (aaaa-mm-dd) y no anterior a fecha_inicio' });
+        }
+        if (cantidad_dias != null && !(Number.isInteger(Number(cantidad_dias)) && Number(cantidad_dias) > 0)) {
+            return res.status(400).json({ error: 'cantidad_dias debe ser un número entero mayor a 0' });
         }
 
         const db = await connect();
@@ -79,10 +89,11 @@ export const crearSolicitudJustificacion = async (req, res) => {
         }
 
         const query = `
-            INSERT INTO dbasistencia.solicitudes_justificacion (legajo, codina, cargo_id, tipo, comunico, observacion, dias_solicitados, fecha_inicio)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO dbasistencia.solicitudes_justificacion (legajo, codina, cargo_id, tipo, comunico, observacion, cantidad_dias, fecha_inicio, fecha_fin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        const values = [legajo, codina, cargo_id ?? null, tipo, comunico, observacion ?? null, dias_solicitados ?? null, fecha_inicio];
+        const values = [legajo, codina, cargo_id ?? null, tipo, comunico, observacion ?? null,
+            cantidad_dias == null ? null : Number(cantidad_dias), fecha_inicio, fecha_fin ?? null];
 
         const [result] = await db.query(query, values);
 
@@ -181,6 +192,11 @@ export const gestionarSolicitudJustificacion = async (req, res) => {
             await conn.rollback();
             return res.status(400).json({ error: 'fechaini y fechafin deben ser fechas válidas (aaaa-mm-dd) y la fecha fin no puede ser anterior al inicio' });
         }
+        // Una inasistencia solo se registra una vez pasada su fecha de fin (las licencias no tienen esta restricción)
+        if (sol.tipo === 'I' && fechafin >= new Date().toLocaleDateString('sv-SE')) {
+            await conn.rollback();
+            return res.status(400).json({ error: 'La inasistencia solo se puede registrar después de su fecha de fin.' });
+        }
         const resolucion = String(nrores ?? '').trim();
         if (resolucion.length < 1 || resolucion.length > 20) {
             await conn.rollback();
@@ -274,9 +290,10 @@ export const subirDocumentoSolicitud = subirDocumento(async (req, res) => {
 
     const rutaRelativa = path.join('uploads', 'solicitudes', req.file.filename);
     await db.query(
-        'UPDATE dbasistencia.solicitudes_justificacion SET ruta_documento = ? WHERE id = ?',
+        'UPDATE dbasistencia.solicitudes_justificacion SET documento = ? WHERE id = ?',
         [rutaRelativa, id]
     );
 
-    res.status(200).json({ message: 'Documento asociado correctamente', ruta_documento: rutaRelativa });
-});
+    // ruta_documento: nombre anterior del campo, se mantiene en la respuesta por compatibilidad
+    res.status(200).json({ message: 'Documento asociado correctamente', documento: rutaRelativa, ruta_documento: rutaRelativa });
+})
