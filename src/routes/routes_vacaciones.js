@@ -2,7 +2,8 @@ import { Router } from "express";
 import {
   getAgentesVacaciones,
   getPersonalVacaciones,
-  generarReconocimientos,
+  getPersonalOrigen,
+  generarPersonal,
   crearPersonalVacaciones,
   modiPersonalVacaciones,
   ajustarDerecho,
@@ -32,7 +33,7 @@ import {
   modiEscala,
 } from "../controllers/controllers_vacaciones.js";
 
-// Licencia anual ordinaria (vacaciones). Ver sql/licencia_anual.sql.
+// Licencia anual ordinaria (vacaciones). Ver sql/licencia_anual_actualizacion.sql.
 const router = Router();
 
 // App del empleado: el legajo sale del token (soloEmpleado pisa cualquier legajo recibido)
@@ -59,7 +60,8 @@ router.put("/escala", modiEscala);
 // Personal y derechos
 router.get("/personal", getPersonalVacaciones);
 router.post("/personal", crearPersonalVacaciones);
-router.post("/personal/reconocimientos", generarReconocimientos);
+router.get("/personal/origen", getPersonalOrigen);
+router.post("/personal/generar", generarPersonal);
 router.put("/personal/:legajo", modiPersonalVacaciones);
 router.put("/derechos/:id", ajustarDerecho);
 

@@ -1557,3 +1557,200 @@ export const getAlertaSalida = async (req, res) => {
     res.status(500).json({ error: 'Error al verificar alerta de salida' });
   }
 };
+
+
+// ==========================================
+// ASISTENCIA VIRTUAL (PERÍODO DE VACACIONES: 21 DIC - 1 FEB)
+// ==========================================
+
+export const esPeriodoRecesoVacaciones = (fecha = new Date()) => {
+  const mes = fecha.getMonth(); // 0 = Ene, 1 = Feb, ..., 11 = Dic
+  const dia = fecha.getDate();
+  // 21 de Diciembre al 31 de Diciembre
+  if (mes === 11 && dia >= 21) return true;
+  // Todo Enero (1 al 31)
+  if (mes === 0) return true;
+  // 1 de Febrero
+  if (mes === 1 && dia <= 1) return true;
+  return false;
+};
+
+export const getEstadoAsistenciaVirtual = async (req, res) => {
+  const { legajo } = req.params;
+  const esPeriodoReal = esPeriodoRecesoVacaciones(new Date());
+  const esHabilitado = esPeriodoReal || process.env.ALLOW_VIRTUAL_TEST === 'true';
+
+  try {
+    const db = await connect();
+    const [agenteRows] = await db.query(
+      'SELECT legajo, apellido, condicion FROM dbasistencia.agentes WHERE legajo = ?',
+      [legajo]
+    );
+
+    if (!agenteRows || agenteRows.length === 0) {
+      return res.status(404).json({ error: 'Agente no encontrado' });
+    }
+
+    const condicion = agenteRows[0].condicion;
+    const tabla = String(condicion) === '1' ? 'registroasistenciad' : 'registroasistenciand';
+
+    const [registrosHoy] = await db.query(
+      `SELECT nroregistro, legajo,
+              DATE_FORMAT(fecha, '%Y-%m-%d') as fecha,
+              DATE_FORMAT(fecha, '%d-%m-%Y') as fecha_formateada,
+              Hentrada, Hsalida,
+              ROUND(cantidadHoras, 2) as cantidadHoras,
+              virtual
+       FROM dbasistencia.${tabla}
+       WHERE legajo = ? AND fecha = CURDATE()
+       ORDER BY nroregistro ASC`,
+      [legajo]
+    );
+
+    let estado = 'FUERA_DE_TURNO';
+    let ultimoRegistro = null;
+    let minutosDesdeEntrada = null;
+    let puedeMarcarSalida = true;
+
+    if (registrosHoy.length > 0) {
+      ultimoRegistro = registrosHoy[registrosHoy.length - 1];
+      const tieneEntrada = ultimoRegistro.Hentrada && ultimoRegistro.Hentrada !== '' && ultimoRegistro.Hentrada !== 'X';
+      const faltaSalida = !ultimoRegistro.Hsalida || ultimoRegistro.Hsalida === '' || ultimoRegistro.Hsalida === 'X';
+
+      if (tieneEntrada && faltaSalida) {
+        estado = 'EN_CURSO';
+        const now = new Date();
+        const [hE, mE] = String(ultimoRegistro.Hentrada).split(':').map(Number);
+        const minE = (!isNaN(hE) ? hE : 0) * 60 + (!isNaN(mE) ? mE : 0);
+        const minNow = now.getHours() * 60 + now.getMinutes();
+        minutosDesdeEntrada = Math.max(0, minNow - minE);
+        puedeMarcarSalida = minutosDesdeEntrada >= 10;
+      }
+    }
+
+    const now = new Date();
+    const horaActual = now.toTimeString().substring(0, 8);
+    const fechaHoy = now.toISOString().split('T')[0];
+
+    res.json({
+      esPeriodoHabilitado: esHabilitado,
+      esPeriodoReal,
+      fechaHoy,
+      horaActual,
+      estado,
+      ultimoRegistro,
+      minutosDesdeEntrada,
+      puedeMarcarSalida,
+      registrosHoy,
+    });
+  } catch (error) {
+    console.error('Error al obtener estado de asistencia virtual:', error);
+    res.status(500).json({ error: 'Error al consultar estado de asistencia virtual' });
+  }
+};
+
+export const marcarAsistenciaVirtual = async (req, res) => {
+  const { legajo } = req.body;
+
+  if (!legajo) {
+    return res.status(400).json({ error: 'El legajo es requerido' });
+  }
+
+  const esPeriodoReal = esPeriodoRecesoVacaciones(new Date());
+  const esHabilitado = esPeriodoReal || process.env.ALLOW_VIRTUAL_TEST === 'true';
+
+  if (!esHabilitado) {
+    return res.status(403).json({
+      error: 'La asistencia virtual solo está habilitada durante el período de vacaciones (del 21 de diciembre al 1 de febrero).'
+    });
+  }
+
+  try {
+    const db = await connect();
+    const [agenteRows] = await db.query(
+      'SELECT legajo, apellido, condicion FROM dbasistencia.agentes WHERE legajo = ?',
+      [legajo]
+    );
+
+    if (!agenteRows || agenteRows.length === 0) {
+      return res.status(404).json({ error: 'Agente no encontrado' });
+    }
+
+    const condicion = agenteRows[0].condicion;
+    const tabla = String(condicion) === '1' ? 'registroasistenciad' : 'registroasistenciand';
+
+    const [registrosHoy] = await db.query(
+      `SELECT nroregistro, legajo,
+              DATE_FORMAT(fecha, '%Y-%m-%d') as fecha,
+              Hentrada, Hsalida
+       FROM dbasistencia.${tabla}
+       WHERE legajo = ? AND fecha = CURDATE()
+       ORDER BY nroregistro DESC
+       LIMIT 1`,
+      [legajo]
+    );
+
+    const now = new Date();
+    const horaActual = now.toTimeString().substring(0, 5); // HH:MM
+
+    if (registrosHoy.length > 0) {
+      const ultimo = registrosHoy[0];
+      const tieneEntrada = ultimo.Hentrada && ultimo.Hentrada !== '' && ultimo.Hentrada !== 'X';
+      const faltaSalida = !ultimo.Hsalida || ultimo.Hsalida === '' || ultimo.Hsalida === 'X';
+
+      if (tieneEntrada && faltaSalida) {
+        // MARCAR SALIDA
+        const [hE, mE] = String(ultimo.Hentrada).split(':').map(Number);
+        const [hS, mS] = horaActual.split(':').map(Number);
+        const minE = (!isNaN(hE) ? hE : 0) * 60 + (!isNaN(mE) ? mE : 0);
+        const minS = (!isNaN(hS) ? hS : 0) * 60 + (!isNaN(mS) ? mS : 0);
+        const diffMin = minS - minE;
+
+        // Validación de tiempo mínimo de 10 minutos entre entrada y salida
+        const MINUTOS_MINIMOS = 10;
+        if (diffMin < MINUTOS_MINIMOS) {
+          const faltan = MINUTOS_MINIMOS - diffMin;
+          return res.status(400).json({
+            error: `Debes esperar al menos 10 minutos desde tu registro de entrada para marcar la salida. Han transcurrido ${Math.max(0, diffMin)} minuto(s), faltan ${faltan} minuto(s).`
+          });
+        }
+
+        const cantidadHoras = Math.round((diffMin / 60) * 100) / 100;
+
+        await db.query(
+          `UPDATE dbasistencia.${tabla}
+           SET Hsalida = ?, cantidadHoras = ?, virtual = 'V'
+           WHERE nroregistro = ? AND legajo = ?`,
+          [horaActual, cantidadHoras, ultimo.nroregistro, legajo]
+        );
+
+        return res.json({
+          success: true,
+          tipo: 'SALIDA',
+          mensaje: `Salida virtual registrada correctamente a las ${horaActual} hs. Horas computadas: ${cantidadHoras.toFixed(2)} hs.`,
+          hora: horaActual,
+          cantidadHoras,
+          nroregistro: ultimo.nroregistro,
+        });
+      }
+    }
+
+    // MARCAR ENTRADA (nuevo turno/registro del día)
+    const [insertResult] = await db.query(
+      `INSERT INTO dbasistencia.${tabla} (legajo, fecha, Hentrada, Hsalida, cantidadHoras, virtual)
+       VALUES (?, CURDATE(), ?, NULL, NULL, 'V')`,
+      [legajo, horaActual]
+    );
+
+    return res.status(201).json({
+      success: true,
+      tipo: 'ENTRADA',
+      mensaje: `Entrada virtual registrada correctamente a las ${horaActual} hs.`,
+      hora: horaActual,
+      nroregistro: insertResult.insertId,
+    });
+  } catch (error) {
+    console.error('Error al marcar asistencia virtual:', error);
+    res.status(500).json({ error: 'Error al registrar la asistencia virtual' });
+  }
+};

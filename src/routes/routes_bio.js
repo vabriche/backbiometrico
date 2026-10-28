@@ -31,6 +31,8 @@ import {
   traerControlAsistenciaPersonal,
   resetPassAgente,
   getAlertaSalida,
+  getEstadoAsistenciaVirtual,
+  marcarAsistenciaVirtual,
 } from "../controllers/controllers_bio.js";
 
 import { Router } from "express";
@@ -100,5 +102,10 @@ router.get('/licenciasHist/:leg', getLicenciasHistoricas)
 router.get('/getpersofce/:nrodocumento', getAgenteApp)
 // Alerta de última asistencia con entrada pero sin salida
 router.get("/alerta_salida/:legajo", getAlertaSalida);
+
+router.get("/asistencia_virtual/estado/:legajo", getEstadoAsistenciaVirtual);
+router.post("/asistencia_virtual/marcar", marcarAsistenciaVirtual);
+router.post("/newhorario", newRegistroasistencia);
+router.put("/registrosalida/:condi/:legajo/:nroregistro", registrarSalida);
 
 export default router;

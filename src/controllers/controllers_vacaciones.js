@@ -1,7 +1,7 @@
 import { connect } from '../database.js'
 import { verifyJWT } from '../config/jw.config.js'
 
-// Licencia anual ordinaria (vacaciones). Capa delgada sobre sql/licencia_anual.sql: las reglas
+// Licencia anual ordinaria (vacaciones). Capa delgada sobre sql/licencia_anual_actualizacion.sql: las reglas
 // de negocio (saldo, reintegro, excepciones, interrupciones) viven en la base, acá solo se
 // llama a las funciones, procedimientos y vistas y se traduce el resultado.
 // Los errores de negocio (SIGNAL 45000) y de restricciones (4025) vuelven como 422 con el
@@ -94,7 +94,7 @@ export const getAgentesVacaciones = async (req, res) => {
     try {
         await cerrarGozados()
         const filas = await leer(
-            `SELECT v.legajo, a.apellido, v.fecha_ingreso, v.reconocimiento_meses, v.activo, v.observacion,
+            `SELECT v.legajo, a.apellido, v.fecha_ingreso, v.activo,
                     s.derecho_id, s.antiguedad_meses, s.dias_corresponden, s.ajuste_motivo, s.dias_aprobados,
                     s.dias_pendientes_autoriz, s.dias_devueltos, s.saldo, s.vencimiento, s.estado_saldo,
                     EXISTS (SELECT 1 FROM reg_licencia_anual_rrhh t
@@ -113,23 +113,28 @@ export const getAgentesVacaciones = async (req, res) => {
     }
 }
 
+// Fecha opcional: vacía -> null; con formato inválido -> undefined (error)
+const fechaOpcional = (valor) => (valor === '' || valor == null ? null : fechaONull(valor) ?? undefined)
+
 const datosPersonal = (body) => {
     const fecha_ingreso = fechaONull(body?.fecha_ingreso)
-    const reconocimiento_meses = enteroONull(body?.reconocimiento_meses ?? 0)
+    const fecha_reconocimiento = fechaOpcional(body?.fecha_reconocimiento)
+    const [anios, meses, dias] = ['anios', 'meses', 'dias'].map((c) => enteroONull(body?.[c] ?? 0))
     if (!fecha_ingreso) return { error: 'La fecha de ingreso no es válida' }
-    if (reconocimiento_meses === null || reconocimiento_meses < 0 || reconocimiento_meses > 600) {
-        return { error: 'El reconocimiento debe ser una cantidad de meses entre 0 y 600' }
-    }
+    if (fecha_reconocimiento === undefined) return { error: 'La fecha de reconocimiento no es válida' }
+    if (anios === null || anios < 0 || anios > 60) return { error: 'Los años reconocidos deben estar entre 0 y 60' }
+    if (meses === null || meses < 0 || meses > 11) return { error: 'Los meses reconocidos deben estar entre 0 y 11' }
+    if (dias === null || dias < 0 || dias > 30) return { error: 'Los días reconocidos deben estar entre 0 y 30' }
     return {
         datos: {
-            fecha_ingreso, reconocimiento_meses,
+            fecha_ingreso, fecha_reconocimiento, anios, meses, dias,
             activo: body?.activo === false || body?.activo === 0 ? 0 : 1,
-            observacion: texto(body?.observacion),
         },
     }
 }
 
-// Alta de una persona en el personal de vacaciones. body: { legajo, fecha_ingreso, reconocimiento_meses, activo, observacion }
+// Alta de una persona en el personal de vacaciones.
+// body: { legajo, fecha_ingreso, fecha_reconocimiento, anios, meses, dias, activo }
 export const crearPersonalVacaciones = async (req, res) => {
     const legajo = enteroONull(req.body?.legajo)
     const { datos, error } = datosPersonal(req.body)
@@ -160,75 +165,99 @@ export const modiPersonalVacaciones = async (req, res) => {
     }
 }
 
-// Reconocimiento leído del texto de la observación ("2 años, 9 meses y 29 días al 30.11.17").
-// El texto da una duración que termina en la fecha "al ...": solo se suma la parte anterior
-// a la fecha de ingreso, porque lo que se solapa con el ingreso ya está en la antigüedad propia.
-// Sin fecha en el texto se toma la duración completa. Los días sueltos se descartan.
-// Devuelve null si el texto no tiene años ni meses.
-const leerReconocimiento = (observacion, fecha_ingreso) => {
-    const t = observacion ?? ''
-    const numero = (re) => Number(t.match(re)?.[1] ?? 0)
-    const anios = numero(/(\d+) *años?/), meses = numero(/(\d+) *mes/), dias = numero(/(\d+) *d[ií]as?/)
-    const total = anios * 12 + meses
-    if (!total) return null
-    const f = t.match(/(\d{1,2})[./](\d{1,2})[./](\d{2,4})/)
-    if (!f) return { meses: total, total, desde: null, hasta: null }
-    const anio = f[3].length === 2 ? Number(f[3]) + (Number(f[3]) < 50 ? 2000 : 1900) : Number(f[3])
-    const hasta = new Date(Date.UTC(anio, f[2] - 1, Number(f[1])))
-    const desde = new Date(Date.UTC(anio - anios, f[2] - 1 - meses, Number(f[1]) - dias))
-    const ingreso = new Date(`${fecha_ingreso}T00:00:00Z`)
-    const corte = hasta < ingreso ? hasta : ingreso
-    const previos = (corte.getUTCFullYear() - desde.getUTCFullYear()) * 12 + corte.getUTCMonth() - desde.getUTCMonth()
-        - (corte.getUTCDate() < desde.getUTCDate() ? 1 : 0)
-    const iso = (d) => d.toISOString().slice(0, 10)
-    return { meses: Math.max(previos, 0), total, desde: iso(desde), hasta: iso(hasta) }
-}
+// Corte del año en curso para mostrar la antigüedad (31/12)
+const CORTE_ANIO = 'MAKEDATE(YEAR(CURDATE()) + 1, 1) - INTERVAL 1 DAY'
 
-// Tabla del personal (vacaciones_rrhh) con la antigüedad al 31/12 del año en curso y el
-// reconocimiento que se lee de la observación, para revisarlo y grabarlo.
+// Tabla del personal (vacaciones_rrhh) con la antigüedad al 31/12 del año en curso en años,
+// meses y días (ver fn_antiguedad_dias) y en meses cumplidos (la que usa la escala).
 // GET /vacaciones/personal
 export const getPersonalVacaciones = async (req, res) => {
     try {
-        const filas = await leer(
-            `SELECT v.legajo, a.apellido, v.fecha_ingreso, v.reconocimiento_meses, v.activo, v.observacion,
-                    fn_antiguedad_meses(v.legajo, MAKEDATE(YEAR(CURDATE()) + 1, 1) - INTERVAL 1 DAY) AS antiguedad_meses
-               FROM vacaciones_rrhh v
-               LEFT JOIN agentes a ON a.legajo = v.legajo
-              ORDER BY a.apellido`)
-        res.send(filas.map((f) => {
-            const r = leerReconocimiento(f.observacion, f.fecha_ingreso)
-            return {
-                ...f, meses_detectados: r?.meses ?? null, meses_texto: r?.total ?? null,
-                reconocimiento_desde: r?.desde ?? null, reconocimiento_hasta: r?.hasta ?? null,
-            }
-        }))
+        res.send(await leer(
+            `SELECT x.legajo, x.apellido, x.fecha_ingreso, x.fecha_reconocimiento, x.anios, x.meses, x.dias, x.activo,
+                    x.total DIV 360 AS antiguedad_anios, x.total MOD 360 DIV 30 AS antiguedad_resto_meses,
+                    x.total MOD 30 AS antiguedad_dias, x.total DIV 30 AS antiguedad_meses
+               FROM (SELECT v.legajo, a.apellido, v.fecha_ingreso, v.fecha_reconocimiento,
+                            v.anios, v.meses, v.dias, v.activo,
+                            fn_antiguedad_dias(v.legajo, ${CORTE_ANIO}) AS total
+                       FROM vacaciones_rrhh v
+                       LEFT JOIN agentes a ON a.legajo = v.legajo) x
+              ORDER BY x.apellido`))
     } catch (error) {
         responderError(res, 'No se pudo obtener el personal')(error)
     }
 }
 
-// Graba como reconocimiento la parte anterior al ingreso leída de la observación. Los derechos
-// ya generados no cambian (quedan con la antigüedad con que se generaron).
-// body: { legajos: [..] }
-export const generarReconocimientos = async (req, res) => {
+// Personal según los datos de RRHH: agentes no docentes (condición 2), ingreso a la FCE
+// (datos_rrhh.fifce) y reconocimiento no docente (antiguedad_rrhh: fechrecnd, aand, mand, dand).
+const SQL_ORIGEN = `
+    SELECT a.legajo, a.apellido, d.fifce AS fecha_ingreso,
+           STR_TO_DATE(NULLIF(TRIM(r.fechrecnd), ''), '%Y-%m-%d') AS fecha_reconocimiento,
+           CAST(IFNULL(r.aand, 0) AS SIGNED) AS anios, CAST(IFNULL(r.mand, 0) AS SIGNED) AS meses,
+           CAST(IFNULL(r.dand, 0) AS SIGNED) AS dias
+      FROM agentes a
+      LEFT JOIN datos_rrhh d ON d.legajo = a.legajo
+      LEFT JOIN antiguedad_rrhh r ON r.legajo = a.legajo
+     WHERE a.condicion = '2'`
+
+const CAMPOS_ORIGEN = ['fecha_ingreso', 'fecha_reconocimiento', 'anios', 'meses', 'dias']
+
+// Compara el personal de RRHH con lo grabado en vacaciones_rrhh, sin grabar nada.
+// estado: 'nuevo' (no está), 'cambia' (difiere en ingreso o reconocimiento), 'igual', o
+// 'sin_ingreso' (no tiene fecha de ingreso en datos_rrhh: no se puede cargar).
+// Además lista a los que están en vacaciones_rrhh y ya no son condición 2.
+// GET /vacaciones/personal/origen
+export const getPersonalOrigen = async (req, res) => {
+    try {
+        const [origen, actuales] = await Promise.all([
+            leer(SQL_ORIGEN),
+            leer(`SELECT v.legajo, a.apellido, a.condicion, v.fecha_ingreso, v.fecha_reconocimiento, v.anios, v.meses, v.dias, v.activo
+                    FROM vacaciones_rrhh v LEFT JOIN agentes a ON a.legajo = v.legajo`),
+        ])
+        const porLegajo = new Map(actuales.map((v) => [v.legajo, v]))
+        const filas = origen.map((o) => {
+            const actual = porLegajo.get(o.legajo)
+            const cambios = actual ? CAMPOS_ORIGEN.filter((c) => String(actual[c] ?? '') !== String(o[c] ?? '')) : []
+            const estado = !o.fecha_ingreso ? 'sin_ingreso' : !actual ? 'nuevo' : cambios.length ? 'cambia' : 'igual'
+            return { ...o, estado, cambios, actual: actual ? Object.fromEntries(CAMPOS_ORIGEN.map((c) => [c, actual[c]])) : null }
+        })
+        const legajosOrigen = new Set(origen.map((o) => o.legajo))
+        const fuera = actuales.filter((v) => !legajosOrigen.has(v.legajo))
+        res.json({ filas, fuera })
+    } catch (error) {
+        responderError(res, 'No se pudieron buscar los datos del personal')(error)
+    }
+}
+
+// Graba en vacaciones_rrhh los legajos indicados con los datos de RRHH: los nuevos entran
+// activos; a los que ya estaban se les actualiza el ingreso y el reconocimiento, sin tocar
+// "activo". Los derechos ya generados no cambian (quedan congelados).
+// body: { legajos: [..] }  ->  { nuevos, actualizados }
+export const generarPersonal = async (req, res) => {
     const legajos = (Array.isArray(req.body?.legajos) ? req.body.legajos : []).map(enteroONull).filter(Boolean)
     if (legajos.length === 0) return res.status(400).json({ error: 'No se indicó ningún agente' })
     try {
-        const actualizados = await conUsuario(req, async (conn) => {
-            const filas = await consultar(conn,
-                'SELECT legajo, fecha_ingreso, observacion FROM vacaciones_rrhh WHERE legajo IN (?) FOR UPDATE', [legajos])
-            let cambiados = 0
-            for (const f of filas) {
-                const r = leerReconocimiento(f.observacion, f.fecha_ingreso)
-                if (!r) continue
-                const [resu] = await conn.query('UPDATE vacaciones_rrhh SET reconocimiento_meses = ? WHERE legajo = ?', [r.meses, f.legajo])
-                cambiados += resu.changedRows
-            }
-            return cambiados
+        const resultado = await conUsuario(req, async (conn) => {
+            const existentes = new Set((await consultar(conn,
+                'SELECT legajo FROM vacaciones_rrhh WHERE legajo IN (?) FOR UPDATE', [legajos])).map((f) => f.legajo))
+            const [resu] = await conn.query(
+                `INSERT INTO vacaciones_rrhh (legajo, fecha_ingreso, fecha_reconocimiento, anios, meses, dias, activo)
+                 SELECT o.legajo, o.fecha_ingreso, o.fecha_reconocimiento, o.anios, o.meses, o.dias, 1
+                   FROM (${SQL_ORIGEN}) o
+                  WHERE o.legajo IN (?) AND o.fecha_ingreso IS NOT NULL
+                 ON DUPLICATE KEY UPDATE fecha_ingreso = VALUES(fecha_ingreso),
+                        fecha_reconocimiento = VALUES(fecha_reconocimiento),
+                        anios = VALUES(anios), meses = VALUES(meses), dias = VALUES(dias)`,
+                [legajos])
+            // affectedRows cuenta 1 por fila insertada y 2 por fila actualizada con cambios
+            const conIngreso = await consultar(conn,
+                `SELECT o.legajo FROM (${SQL_ORIGEN}) o WHERE o.legajo IN (?) AND o.fecha_ingreso IS NOT NULL`, [legajos])
+            const nuevos = conIngreso.filter((o) => !existentes.has(o.legajo)).length
+            return { nuevos, actualizados: (resu.affectedRows - nuevos) / 2 }
         }, { transaccion: true })
-        res.json({ actualizados })
+        res.json(resultado)
     } catch (error) {
-        responderError(res, 'No se pudieron grabar los reconocimientos')(error)
+        responderError(res, 'No se pudo generar el personal')(error)
     }
 }
 
@@ -369,7 +398,7 @@ export const soloEmpleado = (req, res, next) => {
 }
 
 // Resumen para la app del empleado: el legajo sale del token (cada uno ve solo lo suyo).
-// - antigüedad: ingreso, reconocida (otros empleos, solo la anterior al ingreso), propia y total
+// - antigüedad: ingreso, reconocimiento cargado (a/m/d al fecha), propia desde el ingreso y total
 //   al 31/12 del año en curso, con los días que le daría la escala hoy
 // - periodos: por cada periodo con derecho generado, días que le corresponden, saldo y la
 //   ventana sugerida (inicio, último día y reintegro) si todavía no pidió la principal
@@ -380,7 +409,8 @@ export const getResumenEmpleado = async (req, res) => {
     try {
         await cerrarGozados()
         const [persona] = await leer(
-            `SELECT v.legajo, a.apellido, v.fecha_ingreso, v.reconocimiento_meses, v.activo, x.corte,
+            `SELECT v.legajo, a.apellido, v.fecha_ingreso, v.activo, x.corte,
+                    v.fecha_reconocimiento, v.anios, v.meses, v.dias,
                     TIMESTAMPDIFF(MONTH, v.fecha_ingreso, x.corte) AS antiguedad_propia_meses,
                     fn_antiguedad_meses(v.legajo, x.corte) AS antiguedad_total_meses,
                     fn_dias_por_antiguedad(fn_antiguedad_meses(v.legajo, x.corte)) AS dias_segun_escala
@@ -399,7 +429,9 @@ export const getResumenEmpleado = async (req, res) => {
             antiguedad: {
                 fecha_ingreso: persona.fecha_ingreso,
                 al: persona.corte,
-                reconocida_meses: persona.reconocimiento_meses,
+                reconocimiento: {
+                    anios: persona.anios, meses: persona.meses, dias: persona.dias, al: persona.fecha_reconocimiento,
+                },
                 propia_meses: Math.max(persona.antiguedad_propia_meses, 0),
                 total_meses: persona.antiguedad_total_meses,
                 dias_segun_escala: persona.dias_segun_escala,

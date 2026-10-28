@@ -1,229 +1,90 @@
 -- =====================================================================
---  LICENCIA ANUAL ORDINARIA (VACACIONES) - SCRIPT PARA PRODUCCIÓN
+--  LICENCIA ANUAL ORDINARIA (VACACIONES) - ACTUALIZACIÓN DE PRODUCCIÓN
 --  Base: dbasistencia. Requiere MariaDB 10.5 o superior.
 --
+--  Para la base de producción, que ya tiene las tablas de licencia anual de la versión anterior
+--  (licencia_anual_derecho, reg_licencia_anual_rrhh, etc.) pero no las funciones ni los
+--  procedimientos nuevos.
+--
 --  Qué hace, en orden:
---   0. Verifica que la base esté en el estado viejo (si ya se corrió, se detiene sin tocar nada)
---      y renombra las tablas viejas vacaciones_rrhh y reg_licencia_anual_rrhh a *_old
---   1. Parámetros: escala de días, feriados y periodos
---   2. Personal: vacaciones_rrhh nueva
---   3. Derecho, tramos e interrupciones (tablas versionadas: MariaDB guarda el historial sola)
---   4. Funciones
---   5. Procedimientos
---   6. Vistas
---   7. Migración del personal desde vacaciones_rrhh_old (con el reconocimiento ya calculado)
---   8. Periodo 2026 y controles finales
+--   1. vacaciones_rrhh pasa a (legajo, fecha_ingreso, fecha_reconocimiento, anios, meses, dias,
+--      activo). Solo si todavía tiene la estructura vieja (reconocimiento_meses / observacion).
+--   2. Crea o reemplaza todas las funciones (fn_*)
+--   3. Crea o reemplaza todos los procedimientos (sp_*). Entre otros cambios, todo tramo nuevo
+--      queda en estado 'pedido' hasta que RRHH lo autoriza.
+--   4. Recrea las vistas (quedan con el usuario que corre el script como definer)
+--   5. Controles
+--  No toca datos de derechos, tramos ni interrupciones. Se puede volver a correr.
+--  Las reglas de negocio de vacaciones viven en las secciones 2 a 4: si se cambia una función,
+--  procedimiento o vista, cambiarla acá.
 --
 --  Cómo correrlo:
---   1. Hacer un backup completo de la base.
---   2. Correrlo con el cliente de línea de comandos, que se detiene ante el primer error:
---        mysql -h <servidor> -u <usuario> -p dbasistencia < licencia_anual_produccion.sql
---      (en DBeaver o HeidiSQL: ejecutar como script con "detener ante errores").
---   3. Revisar los resultados de los controles de la sección 8.
+--   1. Hacer un backup completo de la base (con --routines).
+--   2. mysql -h <servidor> -u <usuario> -p dbasistencia < licencia_anual_actualizacion.sql
+--   3. Revisar los controles del final.
 --   4. Publicar el backend y el frontend nuevos.
---   5. En la pantalla Licencias anuales: revisar el personal (activos y reconocimientos),
---      y generar los derechos del periodo 2026.
---
---  El backend setea en cada petición el usuario que opera (SET @app_usuario = <legajo>);
---  los procedimientos lo guardan en modificado_por. Sin triggers: los campos derivados son
---  columnas calculadas y el historial se consulta en v_historial_cambios.
+--   5. Pantalla Licencias anuales > Personal: "Generar personal" para cargar ingreso (datos_rrhh)
+--      y reconocimiento (antiguedad_rrhh), revisar activos, y después generar los derechos 2026.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
--- 0. VERIFICACIÓN Y TABLAS VIEJAS
+-- 0. VERIFICACIÓN
 -- ---------------------------------------------------------------------
 DELIMITER //
-CREATE OR REPLACE PROCEDURE tmp_verificar_licencia_anual()
+CREATE OR REPLACE PROCEDURE tmp_verificar_actualizacion()
 BEGIN
   IF CAST(SUBSTRING_INDEX(VERSION(), '.', 1) AS UNSIGNED) * 100
      + CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(VERSION(), '.', 2), '.', -1) AS UNSIGNED) < 1005 THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Se necesita MariaDB 10.5 o superior';
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Se necesita MariaDB 10.5 o superior: no se hizo ningún cambio';
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.TABLES
-              WHERE TABLE_SCHEMA = DATABASE()
-                AND TABLE_NAME IN ('escala_vacaciones', 'feriados', 'periodo_vacaciones',
-                                   'licencia_anual_derecho', 'licencia_interrupcion',
-                                   'vacaciones_rrhh_old', 'reg_licencia_anual_rrhh_old')) THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El script ya se corrió en esta base: no se hizo ningún cambio';
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM information_schema.COLUMNS
-                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vacaciones_rrhh'
-                    AND COLUMN_NAME = 'reconocimiento') THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'No está la tabla vieja vacaciones_rrhh (con la columna reconocimiento): no se hizo ningún cambio';
+  IF (SELECT COUNT(*) FROM information_schema.TABLES
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME IN ('vacaciones_rrhh', 'licencia_anual_derecho', 'reg_licencia_anual_rrhh',
+                            'licencia_interrupcion', 'periodo_vacaciones', 'escala_vacaciones', 'feriados')) < 7 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La base no tiene las tablas de licencia anual: no se hizo ningún cambio';
   END IF;
 END//
 DELIMITER ;
-CALL tmp_verificar_licencia_anual();
-DROP PROCEDURE tmp_verificar_licencia_anual;
-
--- vacaciones_rrhh guardaba fecha de ingreso, reconocimiento y antigüedad como texto;
--- reg_licencia_anual_rrhh tenía tramos sin derecho ni estado. Se conservan como *_old.
-RENAME TABLE vacaciones_rrhh TO vacaciones_rrhh_old;
-RENAME TABLE IF EXISTS reg_licencia_anual_rrhh TO reg_licencia_anual_rrhh_old;
+CALL tmp_verificar_actualizacion();
+DROP PROCEDURE tmp_verificar_actualizacion;
 
 -- ---------------------------------------------------------------------
--- 1. PARÁMETROS
+-- 1. PERSONAL: ESTRUCTURA NUEVA DE vacaciones_rrhh
 -- ---------------------------------------------------------------------
+-- Ingreso a la FCE (datos_rrhh.fifce) y reconocimiento de otros empleos como duración
+-- (anios, meses, dias) que termina en fecha_reconocimiento (antiguedad_rrhh).
+-- Se conservan legajo, fecha_ingreso y activo; el reconocimiento se vuelve a cargar con
+-- "Generar personal".
+DELIMITER //
+CREATE OR REPLACE PROCEDURE tmp_actualizar_personal()
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vacaciones_rrhh'
+                AND COLUMN_NAME = 'reconocimiento_meses') THEN
+    ALTER TABLE vacaciones_rrhh
+      DROP COLUMN reconocimiento_meses,
+      DROP COLUMN observacion,
+      ADD COLUMN fecha_reconocimiento DATE DEFAULT NULL AFTER fecha_ingreso,
+      ADD COLUMN anios SMALLINT(5) UNSIGNED DEFAULT 0 AFTER fecha_reconocimiento,
+      ADD COLUMN meses SMALLINT(5) UNSIGNED DEFAULT 0 AFTER anios,
+      ADD COLUMN dias  SMALLINT(5) UNSIGNED DEFAULT 0 AFTER meses,
+      MODIFY COLUMN activo TINYINT(1) DEFAULT NULL;
+  END IF;
+END//
+DELIMITER ;
+CALL tmp_actualizar_personal();
+DROP PROCEDURE tmp_actualizar_personal;
 
--- Escala de días según años de antigüedad al 31/12.
--- Se edita desde la pantalla (Parámetros). Los días son siempre 20..45.
-CREATE TABLE escala_vacaciones (
-  anios_desde TINYINT UNSIGNED NOT NULL COMMENT 'Años cumplidos desde (inclusive)',
-  anios_hasta TINYINT UNSIGNED NOT NULL COMMENT 'Años cumplidos hasta (exclusive)',
-  dias        SMALLINT UNSIGNED NOT NULL,
-  PRIMARY KEY (anios_desde),
-  CONSTRAINT chk_escala_rango CHECK (anios_hasta > anios_desde),
-  CONSTRAINT chk_escala_dias  CHECK (dias IN (20,25,30,35,40,45))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT INTO escala_vacaciones (anios_desde, anios_hasta, dias) VALUES
-  ( 0,   5, 20),
-  ( 5,  10, 25),
-  (10,  15, 30),
-  (15,  20, 35),
-  (20, 255, 40);
-
--- Feriados nacionales y provinciales (no laborables para el cálculo de reintegro).
-CREATE TABLE feriados (
-  fecha       DATE PRIMARY KEY,
-  descripcion VARCHAR(100) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Carga inicial. Completar desde la pantalla (Parámetros) con los trasladables y provinciales.
-INSERT INTO feriados (fecha, descripcion) VALUES
-  ('2026-12-08','Inmaculada Concepción'),
-  ('2026-12-25','Navidad'),
-  ('2027-01-01','Año Nuevo'),
-  ('2027-02-08','Carnaval'),
-  ('2027-02-09','Carnaval'),
-  ('2027-03-24','Día de la Memoria'),
-  ('2027-03-26','Viernes Santo'),
-  ('2027-04-02','Malvinas'),
-  ('2027-05-01','Día del Trabajador'),
-  ('2027-05-25','Revolución de Mayo'),
-  ('2027-06-20','Día de la Bandera'),
-  ('2027-07-09','Día de la Independencia'),
-  ('2027-12-08','Inmaculada Concepción'),
-  ('2027-12-25','Navidad');
-
--- Ventana y vencimiento de cada periodo.
-CREATE TABLE periodo_vacaciones (
-  periodo           SMALLINT UNSIGNED PRIMARY KEY COMMENT 'Año de la licencia',
-  fecha_corte       DATE NOT NULL COMMENT 'Antigüedad calculada a esta fecha (31/12 del periodo)',
-  ventana_desde     DATE NOT NULL COMMENT 'Primer día habitual de inicio (ej. 21/12)',
-  reintegro_general DATE NOT NULL COMMENT 'Reintegro habitual (primer lunes de febrero)',
-  fecha_limite_pedido DATE NOT NULL COMMENT 'Pedido principal antes de esta fecha (ej. 01/12)',
-  vencimiento       DATE NOT NULL COMMENT 'Vencimiento orientativo del saldo (30/11 del año siguiente)',
-  generado          DATETIME NULL COMMENT 'Cuándo se generaron los derechos',
-  CONSTRAINT chk_periodo_fechas CHECK (ventana_desde < reintegro_general AND reintegro_general < vencimiento)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- Función de una versión intermedia que ya no se usa
+DROP FUNCTION IF EXISTS fn_inicio_antiguedad;
 
 -- ---------------------------------------------------------------------
--- 2. PERSONAL (reemplaza a vacaciones_rrhh; se carga en la sección 7)
--- ---------------------------------------------------------------------
-CREATE TABLE vacaciones_rrhh (
-  legajo               INT NOT NULL PRIMARY KEY,
-  fecha_ingreso        DATE NOT NULL,
-  reconocimiento_meses SMALLINT UNSIGNED NOT NULL DEFAULT 0
-                       COMMENT 'Antigüedad reconocida de otros empleos, en meses',
-  activo               TINYINT(1) NOT NULL DEFAULT 1,
-  observacion          VARCHAR(255) NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ---------------------------------------------------------------------
--- 3. DERECHO, TRAMOS, INTERRUPCIONES, HISTORIAL
--- ---------------------------------------------------------------------
-
--- Un registro por persona y periodo. Se genera el 1/11 y queda congelado.
-CREATE TABLE licencia_anual_derecho (
-  id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  legajo            INT NOT NULL,
-  periodo           SMALLINT UNSIGNED NOT NULL,
-  antiguedad_meses  SMALLINT UNSIGNED NOT NULL COMMENT 'Antigüedad al 31/12, congelada',
-  dias_corresponden SMALLINT UNSIGNED NOT NULL,
-  ajuste_motivo     VARCHAR(255) NULL COMMENT 'Si RRHH corrige dias_corresponden a mano',
-  generado          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  modificado_por    INT NULL COMMENT 'Último usuario que creó o cambió la fila',
-  UNIQUE KEY uq_derecho (legajo, periodo),
-  CONSTRAINT fk_derecho_legajo  FOREIGN KEY (legajo)  REFERENCES vacaciones_rrhh(legajo),
-  CONSTRAINT fk_derecho_periodo FOREIGN KEY (periodo) REFERENCES periodo_vacaciones(periodo)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 WITH SYSTEM VERSIONING;
-
--- Tramos de licencia (el pedido). Varios por derecho.
-CREATE TABLE reg_licencia_anual_rrhh (
-  id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  derecho_id       INT UNSIGNED NOT NULL,
-  tipo             ENUM('principal','saldo','compensacion') NOT NULL DEFAULT 'principal',
-  fecha_inicio     DATE NOT NULL,
-  dias_computados  SMALLINT UNSIGNED NOT NULL COMMENT 'Días que descuentan del derecho',
-  fecha_fin_computo DATE AS (fecha_inicio + INTERVAL dias_computados - 1 DAY) VIRTUAL
-                   COMMENT 'Último día que computa (columna calculada)',
-  fecha_reintegro  DATE NOT NULL COMMENT 'Día en que vuelve a trabajar',
-  dias_corridos    SMALLINT AS (DATEDIFF(fecha_reintegro, fecha_inicio)) VIRTUAL
-                   COMMENT 'Informativo, incluye fin de semana o feriado final (columna calculada)',
-  estado           ENUM('pedido','aprobado','rechazado','cancelado','gozado') NOT NULL DEFAULT 'pedido',
-  fuera_de_norma   TINYINT(1) NOT NULL DEFAULT 0,
-  motivos_norma    VARCHAR(255) NULL COMMENT 'Códigos separados por coma (ver documento)',
-  observacion      VARCHAR(255) NULL,
-  autorizado_por   INT NULL,
-  fecha_autoriz    DATETIME NULL,
-  motivo_autoriz   VARCHAR(255) NULL,
-  creado_por       INT NULL,
-  creado           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  modificado_por   INT NULL COMMENT 'Último usuario que creó o cambió la fila',
-  modificado       DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
-  KEY idx_tramo_derecho (derecho_id),
-  KEY idx_tramo_fechas (fecha_inicio, fecha_reintegro),
-  CONSTRAINT fk_tramo_derecho FOREIGN KEY (derecho_id) REFERENCES licencia_anual_derecho(id),
-  CONSTRAINT chk_tramo_dias   CHECK (dias_computados > 0),
-  CONSTRAINT chk_tramo_fechas CHECK (fecha_reintegro > fecha_inicio),
-  CONSTRAINT chk_tramo_obs    CHECK (fuera_de_norma = 0 OR observacion IS NOT NULL)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 WITH SYSTEM VERSIONING;
-
--- Interrupciones dentro de un tramo: enfermedad (se devuelve) o trabajo (se compensa).
-CREATE TABLE licencia_interrupcion (
-  id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  tramo_id        INT UNSIGNED NOT NULL,
-  fecha_desde     DATE NOT NULL,
-  fecha_hasta     DATE NOT NULL,
-  dias            SMALLINT UNSIGNED NOT NULL COMMENT 'Días que vuelven al saldo',
-  motivo          ENUM('enfermedad','trabajo','otro') NOT NULL,
-  tipo_referencia ENUM('inasistencia','parte_medico','asistencia','otro') NULL,
-  nro_referencia  VARCHAR(50) NULL COMMENT 'Nro de inasistencia / parte médico / registro de asistencia',
-  estado          ENUM('pendiente','validada','rechazada') NOT NULL DEFAULT 'pendiente',
-  validado_por    INT NULL,
-  fecha_validacion DATETIME NULL,
-  observacion     VARCHAR(255) NULL,
-  creado_por      INT NULL,
-  creado          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  modificado_por  INT NULL COMMENT 'Último usuario que creó o cambió la fila',
-  KEY idx_interr_tramo (tramo_id),
-  KEY idx_interr_ref (tipo_referencia, nro_referencia),
-  CONSTRAINT fk_interr_tramo FOREIGN KEY (tramo_id) REFERENCES reg_licencia_anual_rrhh(id),
-  CONSTRAINT chk_interr_fechas CHECK (fecha_hasta >= fecha_desde),
-  -- Enfermedad: obligatorio el parte médico o la inasistencia
-  CONSTRAINT chk_interr_enf CHECK (
-    motivo <> 'enfermedad'
-    OR (tipo_referencia IN ('inasistencia','parte_medico') AND nro_referencia IS NOT NULL)
-  )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 WITH SYSTEM VERSIONING;
--- Cuando se conozcan las tablas de inasistencias y partes médicos, agregar
--- las claves foráneas o una validación en sp_registrar_interrupcion.
-
--- Historial: no hay tabla ni triggers. Las tres tablas de arriba son
--- versionadas: cada INSERT, UPDATE o DELETE guarda la versión anterior de la
--- fila con su vigencia (ROW_START, ROW_END). Se consulta con
---   SELECT ... FROM reg_licencia_anual_rrhh FOR SYSTEM_TIME ALL WHERE id = ...
--- o con la vista v_historial_cambios (sección 6).
-
-
--- ---------------------------------------------------------------------
--- 4. FUNCIONES
+-- 2. FUNCIONES
 -- ---------------------------------------------------------------------
 DELIMITER //
 
 -- ¿Es día laborable? Lunes a viernes y no feriado.
-CREATE FUNCTION fn_es_habil(p_fecha DATE)
+CREATE OR REPLACE FUNCTION fn_es_habil(p_fecha DATE)
 RETURNS TINYINT(1) NOT DETERMINISTIC READS SQL DATA
 BEGIN
   RETURN DAYOFWEEK(p_fecha) NOT IN (1,7)
@@ -232,7 +93,7 @@ END//
 
 -- Fecha de reintegro: el día siguiente al último día computado;
 -- si cae sábado, domingo o feriado, pasa al siguiente día hábil.
-CREATE FUNCTION fn_calcular_reintegro(p_inicio DATE, p_dias SMALLINT)
+CREATE OR REPLACE FUNCTION fn_calcular_reintegro(p_inicio DATE, p_dias SMALLINT)
 RETURNS DATE NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE r DATE DEFAULT DATE_ADD(p_inicio, INTERVAL p_dias DAY);
@@ -247,7 +108,7 @@ END//
 -- o feriado): se elige la mayor que no supera p_maximo (el saldo). Si ni la menor entra,
 -- devuelve la menor, para que la simulación informe que excede el saldo.
 -- NULL si el reintegro no es posterior al inicio o no es día hábil.
-CREATE FUNCTION fn_dias_por_reintegro(p_inicio DATE, p_reintegro DATE, p_maximo SMALLINT)
+CREATE OR REPLACE FUNCTION fn_dias_por_reintegro(p_inicio DATE, p_reintegro DATE, p_maximo SMALLINT)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE d INT DEFAULT DATEDIFF(p_reintegro, p_inicio);
@@ -263,7 +124,7 @@ BEGIN
 END//
 
 -- Primer día hábil igual o posterior a una fecha (para sugerir inicio).
-CREATE FUNCTION fn_proximo_habil(p_fecha DATE)
+CREATE OR REPLACE FUNCTION fn_proximo_habil(p_fecha DATE)
 RETURNS DATE NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE r DATE DEFAULT p_fecha;
@@ -273,19 +134,42 @@ BEGIN
   RETURN r;
 END//
 
--- Antigüedad en meses a una fecha de corte, incluido el reconocimiento.
-CREATE FUNCTION fn_antiguedad_meses(p_legajo INT, p_corte DATE)
+-- Antigüedad a una fecha de corte, en días de "meses de 30 y años de 12 meses"
+-- (años = valor DIV 360, meses = valor MOD 360 DIV 30, días = valor MOD 30).
+-- Sin reconocimiento: el lapso desde la fecha de ingreso hasta el corte.
+-- Con reconocimiento: lo reconocido (anios, meses, dias) más el lapso desde
+-- fecha_reconocimiento hasta el corte (si no tiene fecha, desde el ingreso).
+-- Las sumas pasan los días a meses cada 30 y los meses a años cada 12.
+-- NULL si el legajo no está en vacaciones_rrhh.
+CREATE OR REPLACE FUNCTION fn_antiguedad_dias(p_legajo INT, p_corte DATE)
+RETURNS INT NOT DETERMINISTIC READS SQL DATA
+BEGIN
+  DECLARE v_ingreso, v_fecha_rec, v_desde DATE;
+  DECLARE v_anios, v_meses, v_dias, v_lapso_meses INT;
+  SELECT fecha_ingreso, fecha_reconocimiento, IFNULL(anios, 0), IFNULL(meses, 0), IFNULL(dias, 0)
+    INTO v_ingreso, v_fecha_rec, v_anios, v_meses, v_dias
+    FROM vacaciones_rrhh WHERE legajo = p_legajo;
+  IF v_ingreso IS NULL THEN
+    RETURN NULL;
+  END IF;
+  SET v_desde = IF(v_anios + v_meses + v_dias = 0, v_ingreso, IFNULL(v_fecha_rec, v_ingreso));
+  IF v_desde > p_corte THEN
+    SET v_desde = p_corte;
+  END IF;
+  SET v_lapso_meses = TIMESTAMPDIFF(MONTH, v_desde, p_corte);
+  RETURN (v_anios * 12 + v_meses + v_lapso_meses) * 30 + v_dias
+         + DATEDIFF(p_corte, v_desde + INTERVAL v_lapso_meses MONTH);
+END//
+
+-- Antigüedad en meses cumplidos a una fecha de corte (la que usa la escala).
+CREATE OR REPLACE FUNCTION fn_antiguedad_meses(p_legajo INT, p_corte DATE)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
-  DECLARE v_meses INT;
-  SELECT TIMESTAMPDIFF(MONTH, fecha_ingreso, p_corte) + reconocimiento_meses
-    INTO v_meses
-    FROM vacaciones_rrhh WHERE legajo = p_legajo;
-  RETURN GREATEST(IFNULL(v_meses, 0), 0);
+  RETURN IFNULL(fn_antiguedad_dias(p_legajo, p_corte) DIV 30, 0);
 END//
 
 -- Días según escala para una antigüedad en meses.
-CREATE FUNCTION fn_dias_por_antiguedad(p_meses SMALLINT)
+CREATE OR REPLACE FUNCTION fn_dias_por_antiguedad(p_meses SMALLINT)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE v_dias SMALLINT;
@@ -296,7 +180,7 @@ BEGIN
 END//
 
 -- Días devueltos por un tramo (interrupciones validadas).
-CREATE FUNCTION fn_dias_devueltos_tramo(p_tramo_id INT UNSIGNED)
+CREATE OR REPLACE FUNCTION fn_dias_devueltos_tramo(p_tramo_id INT UNSIGNED)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   RETURN (SELECT IFNULL(SUM(dias), 0) FROM licencia_interrupcion
@@ -305,7 +189,7 @@ END//
 
 -- Saldo de un derecho. Los pedidos pendientes ya reservan días,
 -- para que nadie pueda pedir dos veces el mismo saldo.
-CREATE FUNCTION fn_saldo(p_derecho_id INT UNSIGNED)
+CREATE OR REPLACE FUNCTION fn_saldo(p_derecho_id INT UNSIGNED)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE v_corr, v_usados, v_devueltos INT DEFAULT 0;
@@ -323,7 +207,7 @@ END//
 
 -- Días devueltos por interrupciones que todavía no se pidieron como compensación.
 -- Esos días solo se toman con un tramo 'compensacion', nunca como 'saldo'.
-CREATE FUNCTION fn_dias_compensables(p_derecho_id INT UNSIGNED)
+CREATE OR REPLACE FUNCTION fn_dias_compensables(p_derecho_id INT UNSIGNED)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE v_devueltos, v_compensados INT DEFAULT 0;
@@ -341,7 +225,7 @@ END//
 
 -- Saldo que puede usar un tramo según su tipo: la compensación solo los días
 -- devueltos por interrupción; el resto de los tipos, el saldo sin esos días.
-CREATE FUNCTION fn_saldo_tipo(p_derecho_id INT UNSIGNED, p_tipo VARCHAR(20))
+CREATE OR REPLACE FUNCTION fn_saldo_tipo(p_derecho_id INT UNSIGNED, p_tipo VARCHAR(20))
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE v_saldo SMALLINT DEFAULT fn_saldo(p_derecho_id);
@@ -353,7 +237,7 @@ BEGIN
 END//
 
 -- Periodo sugerido para un nuevo pedido: el más antiguo con saldo (primero lo viejo).
-CREATE FUNCTION fn_periodo_sugerido(p_legajo INT)
+CREATE OR REPLACE FUNCTION fn_periodo_sugerido(p_legajo INT)
 RETURNS SMALLINT NOT DETERMINISTIC READS SQL DATA
 BEGIN
   DECLARE v_periodo SMALLINT;
@@ -366,14 +250,14 @@ END//
 DELIMITER ;
 
 -- ---------------------------------------------------------------------
--- 5. PROCEDIMIENTOS
+-- 3. PROCEDIMIENTOS
 -- ---------------------------------------------------------------------
 DELIMITER //
 
 -- Crea el periodo con sus fechas por defecto (si no existe).
 -- Ventana desde el 21/12, reintegro el primer lunes de febrero,
 -- límite de pedido 01/12, vencimiento 30/11 del año siguiente.
-CREATE PROCEDURE sp_crear_periodo(IN p_periodo SMALLINT)
+CREATE OR REPLACE PROCEDURE sp_crear_periodo(IN p_periodo SMALLINT)
 BEGIN
   DECLARE v_feb DATE DEFAULT MAKEDATE(p_periodo + 1, 32);  -- 1 de febrero
   DECLARE v_lunes DATE;
@@ -391,7 +275,7 @@ END//
 
 -- Genera el derecho del periodo para todo el personal activo (ejecutar el 1/11).
 -- Es idempotente: no pisa derechos ya generados.
-CREATE PROCEDURE sp_generar_derechos(IN p_periodo SMALLINT, OUT p_generados INT)
+CREATE OR REPLACE PROCEDURE sp_generar_derechos(IN p_periodo SMALLINT, OUT p_generados INT)
 BEGIN
   DECLARE v_corte DATE;
   CALL sp_crear_periodo(p_periodo);
@@ -413,7 +297,7 @@ BEGIN
 END//
 
 -- Simula un tramo sin guardarlo: devuelve reintegro, saldo y advertencias.
-CREATE PROCEDURE sp_simular_tramo(
+CREATE OR REPLACE PROCEDURE sp_simular_tramo(
   IN  p_legajo INT, IN p_periodo SMALLINT, IN p_tipo VARCHAR(20),
   IN  p_inicio DATE, IN p_dias SMALLINT,
   OUT p_reintegro DATE, OUT p_saldo_actual SMALLINT,
@@ -504,7 +388,7 @@ END//
 
 -- Convierte lo que cargó la persona (días, último día o día de reintegro: solo uno)
 -- en días computados y simula el tramo. No guarda nada.
-CREATE PROCEDURE sp_preparar_pedido(
+CREATE OR REPLACE PROCEDURE sp_preparar_pedido(
   IN  p_legajo INT, IN p_periodo SMALLINT, IN p_tipo VARCHAR(20), IN p_inicio DATE,
   IN  p_dias SMALLINT, IN p_ultimo DATE, IN p_reintegro DATE,
   OUT o_dias SMALLINT, OUT o_ultimo DATE, OUT o_reintegro DATE,
@@ -560,7 +444,7 @@ END//
 -- sugerido y, si el periodo no tiene tramo principal, propone fechas: reintegro el
 -- reintegro general e inicio contando el saldo hacia atrás, sin empezar antes de la
 -- ventana ni antes de hoy, y siempre en día hábil.
-CREATE PROCEDURE sp_datos_pedido(IN p_legajo INT)
+CREATE OR REPLACE PROCEDURE sp_datos_pedido(IN p_legajo INT)
 BEGIN
   DECLARE v_sugerido SMALLINT DEFAULT fn_periodo_sugerido(p_legajo);
   SELECT x.*,
@@ -594,7 +478,7 @@ END//
 -- si tiene, queda 'pedido' hasta que se autorice (sp_autorizar_tramo).
 -- Llamar dentro de una transacción: bloquea los derechos de la persona para que dos
 -- pedidos simultáneos no se pasen del saldo ni se superpongan.
-CREATE PROCEDURE sp_registrar_tramo(
+CREATE OR REPLACE PROCEDURE sp_registrar_tramo(
   IN  p_legajo INT, IN p_periodo SMALLINT, IN p_tipo VARCHAR(20),
   IN  p_inicio DATE, IN p_dias SMALLINT, IN p_observacion VARCHAR(255),
   OUT p_tramo_id INT UNSIGNED, OUT p_reintegro DATE,
@@ -624,7 +508,8 @@ BEGIN
   SELECT id INTO v_derecho FROM licencia_anual_derecho
    WHERE legajo = p_legajo AND periodo = p_periodo;
 
-  SET p_estado = IF(p_motivos IS NULL, 'aprobado', 'pedido');
+  -- Todo tramo nace como pedido (aun el principal y dentro de norma): lo aprueba RRHH con sp_autorizar_tramo.
+  SET p_estado = 'pedido';
 
   INSERT INTO reg_licencia_anual_rrhh
     (derecho_id, tipo, fecha_inicio, dias_computados, fecha_reintegro, estado,
@@ -637,7 +522,7 @@ BEGIN
 END//
 
 -- Autoriza o rechaza un tramo pendiente.
-CREATE PROCEDURE sp_autorizar_tramo(
+CREATE OR REPLACE PROCEDURE sp_autorizar_tramo(
   IN p_tramo_id INT UNSIGNED, IN p_aprobar TINYINT, IN p_motivo VARCHAR(255))
 BEGIN
   DECLARE v_estado VARCHAR(20);
@@ -659,7 +544,7 @@ BEGIN
 END//
 
 -- Cancela un tramo que todavía no empezó (los días vuelven al saldo).
-CREATE PROCEDURE sp_cancelar_tramo(IN p_tramo_id INT UNSIGNED, IN p_motivo VARCHAR(255))
+CREATE OR REPLACE PROCEDURE sp_cancelar_tramo(IN p_tramo_id INT UNSIGNED, IN p_motivo VARCHAR(255))
 BEGIN
   DECLARE v_estado VARCHAR(20);
   DECLARE v_inicio DATE;
@@ -686,7 +571,7 @@ END//
 
 -- Registra una interrupción. Solo cuentan los días dentro del periodo computado
 -- (no el fin de semana o feriado extra antes del reintegro).
-CREATE PROCEDURE sp_registrar_interrupcion(
+CREATE OR REPLACE PROCEDURE sp_registrar_interrupcion(
   IN p_tramo_id INT UNSIGNED, IN p_desde DATE, IN p_hasta DATE,
   IN p_motivo VARCHAR(20), IN p_tipo_ref VARCHAR(20), IN p_nro_ref VARCHAR(50),
   IN p_observacion VARCHAR(255), OUT p_interr_id INT UNSIGNED, OUT p_dias SMALLINT)
@@ -731,7 +616,7 @@ BEGIN
 END//
 
 -- Valida o rechaza una interrupción. Solo las validadas devuelven días.
-CREATE PROCEDURE sp_validar_interrupcion(IN p_interr_id INT UNSIGNED, IN p_validar TINYINT)
+CREATE OR REPLACE PROCEDURE sp_validar_interrupcion(IN p_interr_id INT UNSIGNED, IN p_validar TINYINT)
 BEGIN
   IF @app_usuario IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta @app_usuario (quién valida)';
@@ -747,7 +632,7 @@ END//
 
 -- Pasa a 'gozado' los tramos aprobados cuyo reintegro ya pasó. Lo corre el backend antes de
 -- mostrar estados (el event_scheduler está apagado): modificado_por queda NULL (= sistema).
-CREATE PROCEDURE sp_cerrar_tramos_gozados(OUT p_cerrados INT)
+CREATE OR REPLACE PROCEDURE sp_cerrar_tramos_gozados(OUT p_cerrados INT)
 BEGIN
   UPDATE reg_licencia_anual_rrhh
      SET estado = 'gozado', modificado_por = NULL
@@ -758,7 +643,7 @@ END//
 DELIMITER ;
 
 -- ---------------------------------------------------------------------
--- 6. VISTAS
+-- 4. VISTAS
 -- ---------------------------------------------------------------------
 
 -- Saldo por persona y periodo.
@@ -903,90 +788,20 @@ SELECT 'derecho', v.id, v.legajo, v.periodo, v.desde,
           FROM licencia_anual_derecho FOR SYSTEM_TIME ALL AS x) v
  WHERE v.ant_dias IS NULL OR v.ant_dias <> v.dias_corresponden;
 
--- ---------------------------------------------------------------------
--- 7. MIGRACIÓN DEL PERSONAL DESDE vacaciones_rrhh_old
--- ---------------------------------------------------------------------
--- fecha_ingreso venía como texto dd/mm/aaaa.
--- El reconocimiento venía como texto con la duración y la fecha a la que se calculó
--- ("6 años, 4 meses y 6 días al 31.03.2024"). Solo se reconoce la parte ANTERIOR a la fecha
--- de ingreso: lo que se superpone con el ingreso ya está en la antigüedad propia. Los días
--- sueltos se descartan. Sin fecha en el texto se toma la duración completa.
--- El texto original queda en observacion (la pantalla Personal lo muestra y permite recalcular).
--- Todos entran activos: revisar en la pantalla Personal quién no debe recibir derecho.
-INSERT INTO vacaciones_rrhh (legajo, fecha_ingreso, reconocimiento_meses, activo, observacion)
-SELECT legajo, ingreso,
-       CASE
-         WHEN anios * 12 + meses = 0 THEN 0
-         WHEN hasta IS NULL THEN anios * 12 + meses
-         ELSE GREATEST(TIMESTAMPDIFF(MONTH,
-                MAKEDATE(YEAR(hasta) - anios, 1) + INTERVAL (MONTH(hasta) - 1 - meses) MONTH
-                  + INTERVAL (DAY(hasta) - dias - 1) DAY,
-                LEAST(hasta, ingreso)), 0)
-       END,
-       1,
-       texto
-  FROM (SELECT legajo, ingreso, texto, anios, meses, dias,
-               STR_TO_DATE(fecha, IF(LENGTH(SUBSTRING_INDEX(fecha, '.', -1)) = 2, '%d.%m.%y', '%d.%m.%Y')) AS hasta
-          FROM (SELECT o.legajo,
-                       STR_TO_DATE(o.fecha_ingreso, '%d/%m/%Y') AS ingreso,
-                       NULLIF(TRIM(o.reconocimiento), '') AS texto,
-                       IFNULL(NULLIF(REGEXP_SUBSTR(o.reconocimiento, '[0-9]+(?= *años?)'), ''), 0) AS anios,
-                       IFNULL(NULLIF(REGEXP_SUBSTR(o.reconocimiento, '[0-9]+(?= *mes)'), ''), 0) AS meses,
-                       IFNULL(NULLIF(REGEXP_SUBSTR(o.reconocimiento, '[0-9]+(?= *d[ií]as?)'), ''), 0) AS dias,
-                       REPLACE(NULLIF(REGEXP_SUBSTR(o.reconocimiento,
-                                 '[0-9]{1,2}[./][0-9]{1,2}[./][0-9]{2,4}'), ''), '/', '.') AS fecha
-                  FROM vacaciones_rrhh_old o
-                 WHERE o.legajo IS NOT NULL
-                   AND STR_TO_DATE(o.fecha_ingreso, '%d/%m/%Y') IS NOT NULL) y) x;
-
--- Tramos viejos: si reg_licencia_anual_rrhh_old tiene filas (ver control de la sección 8),
--- se pasan a mano después de generar los derechos de su periodo. Para cada uno:
---   CALL sp_crear_periodo(<periodo>);  -- y CALL sp_generar_derechos(<periodo>, @n);
---   INSERT INTO reg_licencia_anual_rrhh
---     (derecho_id, tipo, fecha_inicio, dias_computados, fecha_reintegro, estado, observacion, creado)
---   SELECT d.id, 'principal', o.fecha_inicio, o.dias, o.fecha_reintegro,
---          IF(o.fecha_reintegro <= CURDATE(), 'gozado', 'aprobado'), o.observacion, o.creado
---     FROM reg_licencia_anual_rrhh_old o
---     JOIN licencia_anual_derecho d ON d.legajo = o.legajo AND d.periodo = o.periodo;
---   (revisar los legajos con más de un tramo para marcarlos 'saldo' o 'compensacion')
 
 -- ---------------------------------------------------------------------
--- 8. PERIODO 2026 Y CONTROLES
+-- 5. CONTROLES (no cambian nada)
 -- ---------------------------------------------------------------------
--- Fechas por defecto: inicio habitual 21/12, límite del pedido principal 01/12, reintegro el
--- primer lunes de febrero, vencimiento 30/11 del año siguiente. Se ajustan desde Parámetros.
--- Los derechos NO se generan acá: primero revisar el personal en la pantalla y después usar
--- "Generar derechos 2026" (o CALL sp_generar_derechos(2026, @n)).
-CALL sp_crear_periodo(2026);
-
--- Controles (no cambian nada)
-SELECT 'personal migrado' AS control, COUNT(*) AS cantidad FROM vacaciones_rrhh
-UNION ALL SELECT 'personal en la tabla vieja', COUNT(*) FROM vacaciones_rrhh_old WHERE legajo IS NOT NULL
-UNION ALL SELECT 'con reconocimiento', COUNT(*) FROM vacaciones_rrhh WHERE reconocimiento_meses > 0
-UNION ALL SELECT 'tramos viejos a revisar', COUNT(*) FROM reg_licencia_anual_rrhh_old
-UNION ALL SELECT 'funciones y procedimientos', COUNT(*) FROM information_schema.ROUTINES
+SELECT 'vacaciones_rrhh con estructura nueva' AS control,
+       COUNT(*) AS cantidad FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vacaciones_rrhh'
+          AND COLUMN_NAME IN ('fecha_reconocimiento', 'anios', 'meses', 'dias')
+UNION ALL SELECT 'personal en vacaciones_rrhh', COUNT(*) FROM vacaciones_rrhh
+UNION ALL SELECT 'funciones y procedimientos (deben ser 23)', COUNT(*) FROM information_schema.ROUTINES
            WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_NAME REGEXP '^(fn|sp)_'
-UNION ALL SELECT 'vistas', COUNT(*) FROM information_schema.VIEWS
+UNION ALL SELECT 'vistas (deben ser 6)', COUNT(*) FROM information_schema.VIEWS
            WHERE TABLE_SCHEMA = DATABASE()
              AND TABLE_NAME IN ('v_saldo_vacaciones', 'v_sin_pedido_principal', 'v_tramos_pendientes',
-                                'v_interrupciones_pendientes', 'v_historia_licencias', 'v_historial_cambios');
-
--- Filas de la tabla vieja que no se migraron (fecha de ingreso ilegible o sin legajo)
-SELECT o.* FROM vacaciones_rrhh_old o
- WHERE o.legajo IS NULL OR STR_TO_DATE(o.fecha_ingreso, '%d/%m/%Y') IS NULL;
-
--- Reconocimientos calculados, para revisar contra el texto original
-SELECT v.legajo, a.apellido, v.fecha_ingreso, v.reconocimiento_meses,
-       CONCAT(FLOOR(v.reconocimiento_meses / 12), ' años ', MOD(v.reconocimiento_meses, 12), ' meses') AS reconocido,
-       v.observacion AS texto_original
-  FROM vacaciones_rrhh v
-  LEFT JOIN agentes a ON a.legajo = v.legajo
- WHERE v.observacion IS NOT NULL
- ORDER BY a.apellido;
-
--- Personal activo que no es no docente (condición distinta de 2): confirmar si corresponde
-SELECT v.legajo, a.apellido, a.condicion
-  FROM vacaciones_rrhh v
-  LEFT JOIN agentes a ON a.legajo = v.legajo
- WHERE IFNULL(a.condicion, '') <> '2';
+                                'v_interrupciones_pendientes', 'v_historia_licencias', 'v_historial_cambios')
+UNION ALL SELECT 'periodos creados', COUNT(*) FROM periodo_vacaciones;
 -- =====================================================================

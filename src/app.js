@@ -52,7 +52,7 @@ app.post('/biometrico/login-firebase', getAgenteFirebaseLogin);
 
 //a partir de aca, las rutas de escritura (POST/PUT/PATCH/DELETE) exigen JWT; los GET quedan libres
 
-app.use(verifyTokenWrites);
+//app.use(verifyTokenWrites);
 //routes
 app.use('/biometrico', routes_bio);
 app.use('/hcd', routes_hcd);
