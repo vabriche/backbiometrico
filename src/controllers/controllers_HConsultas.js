@@ -73,8 +73,8 @@ export const traerHconsuControl = async (req, res) => {
     const {legajo} = req.params
     try{
     const sql =`
-    select d.id_mat,m.materia, lunes,martes,miercoles,jueves,viernes,d.lugar_c ,d.lugar_v   from dbasistencia.diahoraconsu d 
-    inner join dbasistencia.materias m on m.id_materia = d.id_mat
+    select d.id_mat,m.materia, lunes,martes,miercoles,jueves,viernes,d.lugar_c ,d.lugar_v   from diahoraconsu d 
+    inner join materias m on m.id_materia = d.id_mat
     where d.vigente ='S' AND leg=?` 
         
     const [rows] = await db.query(sql,[legajo]);

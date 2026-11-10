@@ -9,9 +9,13 @@
 --  Qué hace, en orden:
 --   1. vacaciones_rrhh pasa a (legajo, fecha_ingreso, fecha_reconocimiento, anios, meses, dias,
 --      activo). Solo si todavía tiene la estructura vieja (reconocimiento_meses / observacion).
+--      reg_licencia_anual_rrhh y licencia_interrupcion suman vb_jefe_por / vb_jefe_fecha (visto
+--      bueno del jefe), si no las tienen; licencia_interrupcion también motivo_rechazo.
 --   2. Crea o reemplaza todas las funciones (fn_*)
 --   3. Crea o reemplaza todos los procedimientos (sp_*). Entre otros cambios, todo tramo nuevo
---      queda en estado 'pedido' hasta que RRHH lo autoriza.
+--      queda en estado 'pedido': primero el jefe del área le da el visto bueno (o lo rechaza) y
+--      recién después RRHH lo autoriza. Lo mismo con las interrupciones: el jefe da el visto bueno
+--      (o la rechaza) y recién después RRHH la valida.
 --   4. Recrea las vistas (quedan con el usuario que corre el script como definer)
 --   5. Controles
 --  No toca datos de derechos, tramos ni interrupciones. Se puede volver a correr.
@@ -74,6 +78,18 @@ END//
 DELIMITER ;
 CALL tmp_actualizar_personal();
 DROP PROCEDURE tmp_actualizar_personal;
+
+-- Visto bueno del jefe del área sobre cada tramo. La tabla es versionada: para agregarle
+-- columnas hay que permitir el ALTER (KEEP conserva el historial ya guardado).
+SET @@system_versioning_alter_history = KEEP;
+ALTER TABLE reg_licencia_anual_rrhh
+  ADD COLUMN IF NOT EXISTS vb_jefe_por INT DEFAULT NULL AFTER motivo_autoriz,
+  ADD COLUMN IF NOT EXISTS vb_jefe_fecha DATETIME DEFAULT NULL AFTER vb_jefe_por;
+ALTER TABLE licencia_interrupcion
+  ADD COLUMN IF NOT EXISTS vb_jefe_por INT DEFAULT NULL AFTER fecha_validacion,
+  ADD COLUMN IF NOT EXISTS vb_jefe_fecha DATETIME DEFAULT NULL AFTER vb_jefe_por,
+  ADD COLUMN IF NOT EXISTS motivo_rechazo VARCHAR(255) DEFAULT NULL AFTER vb_jefe_fecha;
+SET @@system_versioning_alter_history = ERROR;
 
 -- Función de una versión intermedia que ya no se usa
 DROP FUNCTION IF EXISTS fn_inicio_antiguedad;
@@ -294,6 +310,38 @@ BEGIN
   SET p_generados = ROW_COUNT();
 
   UPDATE periodo_vacaciones SET generado = NOW() WHERE periodo = p_periodo;
+END//
+
+-- Recalcula los derechos ya generados del periodo con la antigüedad actual (p. ej. después de
+-- corregir un reconocimiento cargado por error). No toca los ajustados a mano (ajuste_motivo) ni
+-- los que con los días nuevos quedarían con saldo negativo: esos se informan. Deja el detalle de
+-- lo que cambia en la tabla temporal tmp_recalculo_derechos (accion: actualizado / ajuste_manual /
+-- saldo_negativo), para que quien llama lo muestre.
+CREATE OR REPLACE PROCEDURE sp_recalcular_derechos(
+  IN p_periodo SMALLINT, OUT p_actualizados INT, OUT p_omitidos INT)
+BEGIN
+  DECLARE v_corte DATE;
+  SELECT fecha_corte INTO v_corte FROM periodo_vacaciones WHERE periodo = p_periodo;
+
+  DROP TEMPORARY TABLE IF EXISTS tmp_recalculo_derechos;
+  CREATE TEMPORARY TABLE tmp_recalculo_derechos AS
+  SELECT x.*, CASE WHEN x.ajuste_motivo IS NOT NULL THEN 'ajuste_manual'
+                   WHEN x.dias_nuevo < x.usados THEN 'saldo_negativo'
+                   ELSE 'actualizado' END AS accion
+    FROM (SELECT d.id, d.legajo, d.antiguedad_meses AS meses_antes, d.dias_corresponden AS dias_antes,
+                 fn_antiguedad_meses(d.legajo, v_corte) AS meses_nuevo,
+                 fn_dias_por_antiguedad(fn_antiguedad_meses(d.legajo, v_corte)) AS dias_nuevo,
+                 CAST(d.dias_corresponden - fn_saldo(d.id) AS SIGNED) AS usados, d.ajuste_motivo
+            FROM licencia_anual_derecho d
+           WHERE d.periodo = p_periodo) x
+   WHERE x.meses_nuevo <> x.meses_antes OR x.dias_nuevo <> x.dias_antes;
+
+  UPDATE licencia_anual_derecho d
+    JOIN tmp_recalculo_derechos t ON t.id = d.id AND t.accion = 'actualizado'
+     SET d.antiguedad_meses = t.meses_nuevo, d.dias_corresponden = t.dias_nuevo,
+         d.modificado_por = @app_usuario;
+  SET p_actualizados = ROW_COUNT();
+  SELECT COUNT(*) INTO p_omitidos FROM tmp_recalculo_derechos WHERE accion <> 'actualizado';
 END//
 
 -- Simula un tramo sin guardarlo: devuelve reintegro, saldo y advertencias.
@@ -521,17 +569,73 @@ BEGIN
   SET p_tramo_id = LAST_INSERT_ID();
 END//
 
--- Autoriza o rechaza un tramo pendiente.
+-- Visto bueno del jefe del área sobre un tramo pedido. Con visto bueno el tramo sigue 'pedido'
+-- y pasa a la bandeja de RRHH (v_tramos_pendientes); si el jefe lo rechaza queda 'rechazado'
+-- (los días vuelven al saldo) y RRHH ya no lo ve. Qué jefe puede hacerlo (S: su área, T: todas)
+-- se controla en el backend.
+CREATE OR REPLACE PROCEDURE sp_visto_bueno_tramo(
+  IN p_tramo_id INT UNSIGNED, IN p_aprobar TINYINT, IN p_motivo VARCHAR(255))
+BEGIN
+  DECLARE v_estado VARCHAR(20);
+  DECLARE v_vb DATETIME;
+  SELECT estado, vb_jefe_fecha INTO v_estado, v_vb
+    FROM reg_licencia_anual_rrhh WHERE id = p_tramo_id FOR UPDATE;
+  IF v_estado IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Tramo inexistente';
+  END IF;
+  IF v_estado <> 'pedido' OR v_vb IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El pedido ya no está esperando el visto bueno del jefe';
+  END IF;
+  IF @app_usuario IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta @app_usuario (quién da el visto bueno)';
+  END IF;
+  UPDATE reg_licencia_anual_rrhh
+     SET estado = IF(p_aprobar, 'pedido', 'rechazado'),
+         vb_jefe_por = @app_usuario, vb_jefe_fecha = NOW(),
+         motivo_autoriz = IF(p_aprobar, motivo_autoriz, p_motivo),
+         modificado_por = @app_usuario
+   WHERE id = p_tramo_id;
+END//
+
+-- El jefe quita su visto bueno (p. ej. para que el agente pueda cambiar las fechas). Solo mientras
+-- RRHH no lo autorizó: el tramo vuelve a esperar el visto bueno y sale de v_tramos_pendientes.
+CREATE OR REPLACE PROCEDURE sp_quitar_visto_bueno_tramo(IN p_tramo_id INT UNSIGNED)
+BEGIN
+  DECLARE v_estado VARCHAR(20);
+  DECLARE v_vb DATETIME;
+  SELECT estado, vb_jefe_fecha INTO v_estado, v_vb
+    FROM reg_licencia_anual_rrhh WHERE id = p_tramo_id FOR UPDATE;
+  IF v_estado IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Tramo inexistente';
+  END IF;
+  IF v_estado <> 'pedido' OR v_vb IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Solo se quita el visto bueno de un pedido que todavía no autorizó Dirección de Personal';
+  END IF;
+  IF @app_usuario IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta @app_usuario (quién quita el visto bueno)';
+  END IF;
+  UPDATE reg_licencia_anual_rrhh
+     SET vb_jefe_por = NULL, vb_jefe_fecha = NULL, modificado_por = @app_usuario
+   WHERE id = p_tramo_id;
+END//
+
+-- Autoriza o rechaza un tramo pendiente. Para autorizarlo tiene que tener el visto bueno del jefe.
 CREATE OR REPLACE PROCEDURE sp_autorizar_tramo(
   IN p_tramo_id INT UNSIGNED, IN p_aprobar TINYINT, IN p_motivo VARCHAR(255))
 BEGIN
   DECLARE v_estado VARCHAR(20);
-  SELECT estado INTO v_estado FROM reg_licencia_anual_rrhh WHERE id = p_tramo_id FOR UPDATE;
+  DECLARE v_vb DATETIME;
+  SELECT estado, vb_jefe_fecha INTO v_estado, v_vb
+    FROM reg_licencia_anual_rrhh WHERE id = p_tramo_id FOR UPDATE;
   IF v_estado IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Tramo inexistente';
   END IF;
   IF v_estado <> 'pedido' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Solo se pueden autorizar tramos en estado pedido';
+  END IF;
+  IF p_aprobar AND v_vb IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El pedido todavía no tiene el visto bueno del jefe del área';
   END IF;
   IF @app_usuario IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta @app_usuario (quién autoriza)';
@@ -616,10 +720,42 @@ BEGIN
 END//
 
 -- Valida o rechaza una interrupción. Solo las validadas devuelven días.
+-- Visto bueno del jefe del área sobre una interrupción pendiente. Con visto bueno sigue
+-- 'pendiente' y pasa a la bandeja de RRHH (v_interrupciones_pendientes); si el jefe la rechaza
+-- queda 'rechazada' y no devuelve días. Qué jefe puede hacerlo se controla en el backend.
+CREATE OR REPLACE PROCEDURE sp_visto_bueno_interrupcion(
+  IN p_interr_id INT UNSIGNED, IN p_aprobar TINYINT, IN p_motivo VARCHAR(255))
+BEGIN
+  DECLARE v_estado VARCHAR(20);
+  DECLARE v_vb DATETIME;
+  SELECT estado, vb_jefe_fecha INTO v_estado, v_vb
+    FROM licencia_interrupcion WHERE id = p_interr_id FOR UPDATE;
+  IF v_estado IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Interrupción inexistente';
+  END IF;
+  IF v_estado <> 'pendiente' OR v_vb IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La interrupción ya no está esperando el visto bueno del jefe';
+  END IF;
+  IF @app_usuario IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta @app_usuario (quién da el visto bueno)';
+  END IF;
+  UPDATE licencia_interrupcion
+     SET estado = IF(p_aprobar, 'pendiente', 'rechazada'),
+         vb_jefe_por = @app_usuario, vb_jefe_fecha = NOW(),
+         motivo_rechazo = IF(p_aprobar, NULL, p_motivo),
+         modificado_por = @app_usuario
+   WHERE id = p_interr_id;
+END//
+
+-- Valida (o rechaza) una interrupción pendiente. Para validarla tiene que tener el visto bueno del jefe.
 CREATE OR REPLACE PROCEDURE sp_validar_interrupcion(IN p_interr_id INT UNSIGNED, IN p_validar TINYINT)
 BEGIN
   IF @app_usuario IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Falta @app_usuario (quién valida)';
+  END IF;
+  IF p_validar AND EXISTS (SELECT 1 FROM licencia_interrupcion
+                            WHERE id = p_interr_id AND estado = 'pendiente' AND vb_jefe_fecha IS NULL) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La interrupción todavía no tiene el visto bueno del jefe del área';
   END IF;
   UPDATE licencia_interrupcion
      SET estado = IF(p_validar, 'validada', 'rechazada'),
@@ -685,23 +821,24 @@ SELECT d.legajo, d.periodo, d.dias_corresponden, p.fecha_limite_pedido,
                     WHERE t.derecho_id = d.id AND t.tipo = 'principal'
                       AND t.estado IN ('pedido','aprobado','gozado'));
 
--- Tramos pendientes de autorización.
+-- Tramos pendientes de autorización de RRHH: los pedidos que ya tienen el visto bueno del jefe.
 CREATE OR REPLACE VIEW v_tramos_pendientes AS
 SELECT t.id AS tramo_id, d.legajo, d.periodo, t.tipo, t.fecha_inicio, t.dias_computados,
-       t.fecha_reintegro, t.motivos_norma, t.observacion, t.creado
+       t.fecha_reintegro, t.motivos_norma, t.observacion, t.creado,
+       t.vb_jefe_por, t.vb_jefe_fecha
   FROM reg_licencia_anual_rrhh t
   JOIN licencia_anual_derecho d ON d.id = t.derecho_id
- WHERE t.estado = 'pedido';
+ WHERE t.estado = 'pedido' AND t.vb_jefe_fecha IS NOT NULL;
 
--- Interrupciones pendientes de validar.
+-- Interrupciones pendientes de validar por RRHH: las que ya tienen el visto bueno del jefe.
 CREATE OR REPLACE VIEW v_interrupciones_pendientes AS
 SELECT i.id AS interrupcion_id, d.legajo, d.periodo, i.tramo_id, i.motivo,
        i.fecha_desde, i.fecha_hasta, i.dias, i.tipo_referencia, i.nro_referencia,
-       i.observacion, i.creado
+       i.observacion, i.creado, i.vb_jefe_por, i.vb_jefe_fecha
   FROM licencia_interrupcion i
   JOIN reg_licencia_anual_rrhh t ON t.id = i.tramo_id
   JOIN licencia_anual_derecho d ON d.id = t.derecho_id
- WHERE i.estado = 'pendiente';
+ WHERE i.estado = 'pendiente' AND i.vb_jefe_fecha IS NOT NULL;
 
 -- Historia completa de una persona, en orden cronológico.
 CREATE OR REPLACE VIEW v_historia_licencias AS
@@ -792,12 +929,22 @@ SELECT 'derecho', v.id, v.legajo, v.periodo, v.desde,
 -- ---------------------------------------------------------------------
 -- 5. CONTROLES (no cambian nada)
 -- ---------------------------------------------------------------------
-SELECT 'vacaciones_rrhh con estructura nueva' AS control,
+SELECT 'reg_licencia_anual_rrhh con visto bueno del jefe (deben ser 2)' AS control,
+       COUNT(*) AS cantidad FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reg_licencia_anual_rrhh'
+          AND COLUMN_NAME IN ('vb_jefe_por', 'vb_jefe_fecha')
+UNION ALL
+SELECT 'licencia_interrupcion con visto bueno del jefe (deben ser 3)',
+       COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'licencia_interrupcion'
+          AND COLUMN_NAME IN ('vb_jefe_por', 'vb_jefe_fecha', 'motivo_rechazo')
+UNION ALL
+SELECT 'vacaciones_rrhh con estructura nueva',
        COUNT(*) AS cantidad FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'vacaciones_rrhh'
           AND COLUMN_NAME IN ('fecha_reconocimiento', 'anios', 'meses', 'dias')
 UNION ALL SELECT 'personal en vacaciones_rrhh', COUNT(*) FROM vacaciones_rrhh
-UNION ALL SELECT 'funciones y procedimientos (deben ser 23)', COUNT(*) FROM information_schema.ROUTINES
+UNION ALL SELECT 'funciones y procedimientos (deben ser 27)', COUNT(*) FROM information_schema.ROUTINES
            WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_NAME REGEXP '^(fn|sp)_'
 UNION ALL SELECT 'vistas (deben ser 6)', COUNT(*) FROM information_schema.VIEWS
            WHERE TABLE_SCHEMA = DATABASE()

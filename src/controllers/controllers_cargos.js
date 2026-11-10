@@ -463,7 +463,7 @@ export const getCargosVigentesInterinosND = async (req, res)=>{
     
     
     let strqry=`select cg.legajo,age.apellido,cg.row_id,cg.nc,cg.inst,cg.ca,cg.es,cg.ppal,cg.nv,age.area,DATE_FORMAT(cg.fechalt,"%d-%m-%Y") as fechaAlta, DATE_FORMAT(cg.fechbaj,"%d-%m-%Y") as fechaBaja ,cg.nresa,cg.titular, cg.vigente,cg.adic, cg.ncg,cg.car,cg.pl,cg.mat,cg.rempla,cg.st,cg.observaciones
-    from dbasistencia.cargos cg inner join dbasistencia.agentes age on age.legajo=cg.legajo
+    from cargos cg inner join agentes age on age.legajo=cg.legajo
     where es=2 and ca=4 and vigente='S' `
 
         try {
@@ -1281,7 +1281,7 @@ export const getEstudiosAgente = async (req, res) => {
      CASE es.tipotitulo WHEN 1 THEN 'Secundario' WHEN 2 THEN 'Terciario' WHEN 3 THEN 'Grado' WHEN 4 THEN 'Especialista'
      WHEN 5 THEN 'Magister' WHEN 6 THEN 'Doctorado' WHEN 7 THEN 'Diplomatura' WHEN 8 THEN 'Curso' END AS tp,
      CASE es.estado WHEN 1 THEN 'Finalizado' WHEN 2 THEN 'En Proceso' END AS situacion,ins.nombre as insti, est.nombre as esta, CASE es.adicional WHEN 1 THEN 'SI' WHEN 2 THEN 'NO' END AS adi
-     , es.titulo as ti, es.establecimiento as esb, es.institucion as ititu, es.estado,es.adicional,es.tipotitulo FROM dbasistencia.estudios_rrhh es
+     , es.titulo as ti, es.establecimiento as esb, es.institucion as ititu, es.estado,es.adicional,es.tipotitulo FROM estudios_rrhh es
      inner join establecimientos est on est.id_row =es.establecimiento
      inner join instituciones ins on ins.id_row =es.institucion
      inner join titulos tit on tit.id_row = es.titulo

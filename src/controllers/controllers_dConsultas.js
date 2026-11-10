@@ -22,7 +22,7 @@ export const getCoutTiposCargosDND =async (req,res)=>{
     let strqry = `select ca,case when ca=1 then 'Efectivo' when ca=2 then 'Interino' when ca=3 then 'Interino Remplazante' when ca=4 then 'Contratado'
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion' when ca=9 then 'Beca nv JTP'
     when ca=10 then 'Cargo F.Critica' when ca=11 then 'Interino M.Responzabilidad' when ca=12 then 'Interino Ord.36'
-    else 'desconocido' end as tp , count(ca) from dbasistencia.cargos c where es=${claustro} group by c.ca order by c.ca`
+    else 'desconocido' end as tp , count(ca) from cargos c where es=${claustro} group by c.ca order by c.ca`
     try {
         
     } catch (error) {
@@ -50,7 +50,7 @@ export const getCoutTiposCargosDND = async (req, res) => {
         else 'desconocido' 
       end as tp, 
       count(ca) 
-    from dbasistencia.cargos c 
+    from cargos c 
     where es = ? 
     group by c.ca 
     order by c.ca`;
@@ -73,8 +73,8 @@ export const getTipoCargo = async (req, res) => {
     const { tipocargo } = req.params;
 
     const strqry = `SELECT c.legajo, a.apellido, c.nc, c.inst, c.fechalt, c.ppal, c.nv, c.pl, c.car, c.mat
-    FROM dbasistencia.cargos c
-    INNER JOIN dbasistencia.agentes a ON a.legajo = c.legajo
+    FROM cargos c
+    INNER JOIN agentes a ON a.legajo = c.legajo
     WHERE es = '1' AND ca = ?
     ORDER BY inst, a.apellido`;
 
@@ -91,8 +91,8 @@ export const getTipoCargo = async (req, res) => {
 /*
 export const getTipoCargo = async (req, res)=>{
     const {tipocargo} = req.params
-    let strqry = `select c.legajo,a.apellido ,c.nc,c.inst,c.fechalt,c.ppal,c.nv, c.pl,c.car, c.mat  from dbasistencia.cargos c 
-    inner join dbasistencia.agentes a on a.legajo = c.legajo 
+    let strqry = `select c.legajo,a.apellido ,c.nc,c.inst,c.fechalt,c.ppal,c.nv, c.pl,c.car, c.mat  from cargos c 
+    inner join agentes a on a.legajo = c.legajo 
     where es='1' and ca=${tipocargo} order by inst,a.apellido `
     try {
         const db = await connect()
@@ -136,16 +136,16 @@ export const getCargosVigentesReport =async (req,res)=>{
     strqry = `select c.legajo, age.apellido, age.nrocuil, age.area, drh.fechnac,c.ppal , c.nv, c.fechalt, c.nresa, c.fechbaj, case when ca=1 then 'Efectivo' when ca=2 then 'Interino' when ca=3 then 'Interino Remplazante' when ca=4 then 'Contratado'
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion' when ca=9 then 'Beca nv JTP'
     when ca=10 then 'Cargo F.Critica' when ca=11 then 'Interino M.Responzabilidad' when ca=12 then 'Interino Ord.36'
-    else 'desconocido' end as tp, c.st from dbasistencia.cargos c 
-    inner join dbasistencia.agentes age on age.legajo=c.legajo 
-    inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}` 
+    else 'desconocido' end as tp, c.st from cargos c 
+    inner join agentes age on age.legajo=c.legajo 
+    inner join datos_rrhh drh on drh.legajo=c.legajo ${condicion}` 
     }else if(claustro==='1'){
         strqry = `select c.legajo, age.apellido, age.nrocuil,  drh.fechnac,c.ppal, c.nv, c.car,c.pl, c.mat, c.fechalt, c.nresa, c.fechbaj, case when ca=1 then 'Efectivo' when ca=2 then 'Interino' when ca=3 then 'Interino Remplazante' when ca=4 then 'Contratado'
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion' when ca=9 then 'Beca nv JTP'
     when ca=10 then 'Cargo F.Critica' when ca=11 then 'Interino M.Responzabilidad' when ca=12 then 'Interino Ord.36'
-    else 'desconocido' end as tp, c.st from dbasistencia.cargos c 
-    inner join dbasistencia.agentes age on age.legajo=c.legajo 
-    inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}`
+    else 'desconocido' end as tp, c.st from cargos c 
+    inner join agentes age on age.legajo=c.legajo 
+    inner join datos_rrhh drh on drh.legajo=c.legajo ${condicion}`
     }
    
    
@@ -204,9 +204,9 @@ if (claustro === '2') {
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion'
     when ca=9 then 'Beca nv JTP' when ca=10 then 'Cargo F.Critica' when ca=11 then 'Interino M.Responzabilidad'
     when ca=12 then 'Interino Ord.36' else 'desconocido' end as tp, c.st, c.rempla
-    from dbasistencia.cargos c
-    inner join dbasistencia.agentes age on age.legajo=c.legajo
-    inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
+    from cargos c
+    inner join agentes age on age.legajo=c.legajo
+    inner join datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
 } else if (claustro === '1') {
     strqry = `select c.legajo, c.inst, age.apellido, age.nrocuil, drh.fechnac, c.ppal, c.nv, c.car, c.pl, c.mat, c.fechalt, c.nresa, c.fechbaj, case when adic=1 then 'FC-D'
     when adic=2 then 'FC-ND' when adic=3 then 'FC-G' end as adic,
@@ -214,9 +214,9 @@ if (claustro === '2') {
     when ca=5 then 'Mensualizado' when ca=6 then 'Jornalizado' when ca=7 then 'Sulente' when ca=8 then 'Asignacion'
     when ca=9 then 'Beca nv JTP' when ca=10 then 'Cargo F.Critica' when ca=11 then 'Interino M.Responzabilidad'
     when ca=12 then 'Interino Ord.36' else 'desconocido' end as tp, c.st, c.rempla
-    from dbasistencia.cargos c
-    inner join dbasistencia.agentes age on age.legajo=c.legajo
-    inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
+    from cargos c
+    inner join agentes age on age.legajo=c.legajo
+    inner join datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
 } else if (claustro==='3'){
      strqry = `select c.legajo, c.inst, age.apellido, age.nrocuil, age.area, drh.fechnac, c.ppal, c.nv, c.fechalt, c.nresa, c.fechbaj,case when adic=1 then 'FC-D'
     when adic=2 then 'FC-ND' when adic=3 then 'FC-G' end as adic,
@@ -229,9 +229,9 @@ if (claustro === '2') {
     when nv=22 then 'Coord.Gestion A S.E.' when nv=23 then 'Coord.Gestion B D.E.' when nv=24 then 'Coord.Gestion B S.E.' when nv=25 then 'Coord.Gestion C D.E.'
     when nv=26 then 'Coord.Gestion C S.E.' when nv=27 then 'Coord.Gestion D D.E.' when nv=28 then 'Coord.Gestion D S.E.' when nv=29 then 'Coord.Gestion E D.E.'
     when nv=30 then 'Coord.Gestion E S.E.' end as tipoG
-    from dbasistencia.cargos c
-    inner join dbasistencia.agentes age on age.legajo=c.legajo
-    inner join dbasistencia.datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
+    from cargos c
+    inner join agentes age on age.legajo=c.legajo
+    inner join datos_rrhh drh on drh.legajo=c.legajo ${condicion}`;
 }
 
 
@@ -251,8 +251,8 @@ export const getFuncionesCriticas = async (req, res)=>{
    
     let strqry = `select distinct ar.legajo, ag.apellido,nrores, DATE_FORMAT(fecha_inicio,"%d-%m-%Y") as fecha_inicio, DATE_FORMAT(fecha_fin,"%d-%m-%Y") as fecha_fin , ar.nc, 
     CASE  when tipoA=1 then 'FC-D' when tipoA=2 then 'FC-ND' when tipoA=3 then 'FC-G' END AS tipofc,
-    ar.nc, ar.observacion  from dbasistencia.adicional_rrhh ar 
-    inner join dbasistencia.agentes ag on ag.legajo=ar.legajo
+    ar.nc, ar.observacion  from adicional_rrhh ar 
+    inner join agentes ag on ag.legajo=ar.legajo
     where ar.vigente='S' order by ar.fecha_fin `
 
     try {

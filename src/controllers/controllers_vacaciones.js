@@ -95,6 +95,8 @@ export const getAgentesVacaciones = async (req, res) => {
         await cerrarGozados()
         const filas = await leer(
             `SELECT v.legajo, a.apellido, v.fecha_ingreso, v.activo,
+                    v.fecha_reconocimiento, v.anios, v.meses, v.dias,
+                    fn_antiguedad_dias(v.legajo, MAKEDATE(? + 1, 1) - INTERVAL 1 DAY) AS antiguedad_total_dias,
                     s.derecho_id, s.antiguedad_meses, s.dias_corresponden, s.ajuste_motivo, s.dias_aprobados,
                     s.dias_pendientes_autoriz, s.dias_devueltos, s.saldo, s.vencimiento, s.estado_saldo,
                     EXISTS (SELECT 1 FROM reg_licencia_anual_rrhh t
@@ -106,8 +108,14 @@ export const getAgentesVacaciones = async (req, res) => {
                LEFT JOIN agentes a ON a.legajo = v.legajo
                LEFT JOIN v_saldo_vacaciones s ON s.legajo = v.legajo AND s.periodo = ?
               ORDER BY a.apellido`,
-            [periodo, periodo])
-        res.send(filas)
+            [periodo, periodo, periodo])
+        // Antigüedad al 31/12 del periodo en años, meses y días (meses de 30 días, años de 12 meses)
+        res.send(filas.map(({ antiguedad_total_dias: t, ...f }) => ({
+            ...f,
+            antiguedad_anios: t == null ? null : Math.floor(t / 360),
+            antiguedad_resto_meses: t == null ? null : Math.floor((t % 360) / 30),
+            antiguedad_dias: t == null ? null : t % 30,
+        })))
     } catch (error) {
         responderError(res, 'No se pudo obtener el listado de licencias anuales')(error)
     }
@@ -308,13 +316,23 @@ export const generarDerechos = async (req, res) => {
     if (!Number.isInteger(periodo) || periodo < anio - 1 || periodo > anio + 1) {
         return res.status(400).json({ error: `Solo se pueden generar los periodos ${anio - 1} a ${anio + 1}` })
     }
+    // Genera los derechos que faltan y recalcula los ya generados con la antigüedad actual (si se
+    // corrigió un reconocimiento). Los ajustados a mano y los que quedarían con saldo negativo no
+    // se tocan: vuelven en `cambios` para revisarlos.
     try {
-        const generados = await conUsuario(req, async (conn) => {
+        const resultado = await conUsuario(req, async (conn) => {
             await conn.query('CALL sp_generar_derechos(?, @generados)', [periodo])
-            const [[{ generados }]] = await conn.query('SELECT @generados AS generados')
-            return generados
-        })
-        res.json({ message: 'Derechos generados', generados })
+            await conn.query('CALL sp_recalcular_derechos(?, @actualizados, @omitidos)', [periodo])
+            const [[totales]] = await conn.query('SELECT @generados AS generados, @actualizados AS actualizados, @omitidos AS omitidos')
+            const [cambios] = await conn.query(
+                `SELECT t.legajo, a.apellido, t.meses_antes, t.meses_nuevo, t.dias_antes, t.dias_nuevo,
+                        t.usados, t.ajuste_motivo, t.accion
+                   FROM tmp_recalculo_derechos t LEFT JOIN agentes a ON a.legajo = t.legajo
+                  ORDER BY t.accion, a.apellido`)
+            await conn.query('DROP TEMPORARY TABLE IF EXISTS tmp_recalculo_derechos')
+            return { ...totales, cambios }
+        }, { transaccion: true })
+        res.json({ message: 'Derechos generados', ...resultado })
     } catch (error) {
         responderError(res, 'No se pudieron generar los derechos')(error)
     }
@@ -397,6 +415,25 @@ export const soloEmpleado = (req, res, next) => {
     next()
 }
 
+// App del empleado: la licencia no puede empezar antes del día del pedido (fecha de la base).
+// Solo en las rutas /empleado: RRHH puede seguir cargando tramos con fecha pasada.
+// `enCuerpo`: /preparar devuelve el error en el cuerpo (como sus otros errores de validación).
+const MENSAJE_INICIO_ANTERIOR = 'La fecha de inicio no puede ser anterior a la fecha del pedido'
+export const inicioDesdeHoy = (enCuerpo = false) => async (req, res, next) => {
+    const inicio = fechaONull(req.body?.fecha_inicio)
+    if (!inicio) return next()
+    try {
+        const [[{ anterior }]] = await (await connect()).query('SELECT ? < CURDATE() AS anterior', [inicio])
+        if (!anterior) return next()
+        if (enCuerpo) {
+            return res.json({ dias: null, ultimo_dia: null, fecha_reintegro: null, saldo: null, motivos: [], error: MENSAJE_INICIO_ANTERIOR })
+        }
+        res.status(422).json({ error: MENSAJE_INICIO_ANTERIOR })
+    } catch (error) {
+        responderError(res, 'No se pudo validar la fecha de inicio')(error)
+    }
+}
+
 // Resumen para la app del empleado: el legajo sale del token (cada uno ve solo lo suyo).
 // - antigüedad: ingreso, reconocimiento cargado (a/m/d al fecha), propia desde el ingreso y total
 //   al 31/12 del año en curso, con los días que le daría la escala hoy
@@ -467,7 +504,8 @@ export const getTramosVacaciones = async (req, res) => {
         const tramos = await leer(
             `SELECT t.id, d.periodo, t.tipo, t.fecha_inicio, t.dias_computados, t.fecha_fin_computo,
                     t.fecha_reintegro, t.dias_corridos, t.estado, t.fuera_de_norma, t.motivos_norma,
-                    t.observacion, t.autorizado_por, t.fecha_autoriz, t.motivo_autoriz, t.creado
+                    t.observacion, t.autorizado_por, t.fecha_autoriz, t.motivo_autoriz,
+                    t.vb_jefe_por, t.vb_jefe_fecha, t.creado
                FROM reg_licencia_anual_rrhh t
                JOIN licencia_anual_derecho d ON d.id = t.derecho_id
               WHERE d.legajo = ?
@@ -496,25 +534,43 @@ export const getHistoriaVacaciones = async (req, res) => {
 }
 
 // Convierte lo cargado (días, último día o reintegro: uno solo) en días y simula el tramo. No guarda.
-// body: { legajo, periodo, tipo, fecha_inicio, dias?, ultimo_dia?, fecha_reintegro? }
+// body: { legajo, periodo, tipo, fecha_inicio, dias?, ultimo_dia?, fecha_reintegro?, reemplaza? }
+// Con `reemplaza` (id de un pedido propio sin visto bueno) simula el cambio de fechas: dentro de
+// una transacción que siempre se deshace, cancela ese tramo para que no cuente en saldo ni superposición.
 // Responde { dias, ultimo_dia, fecha_reintegro, saldo, motivos: [], error } (error de negocio en el cuerpo, con 200).
 export const prepararPedido = async (req, res) => {
     const b = req.body ?? {}
     const tipo = TIPOS_TRAMO.includes(b.tipo) ? b.tipo : 'principal'
+    const reemplaza = enteroONull(b.reemplaza)
     try {
         const resultado = await conUsuario(req, async (conn) => {
-            await conn.query(
-                'CALL sp_preparar_pedido(?, ?, ?, ?, ?, ?, ?, @dias, @ultimo, @reintegro, @saldo, @motivos, @error)',
-                [enteroONull(b.legajo), enteroONull(b.periodo), tipo, fechaONull(b.fecha_inicio),
-                    enteroONull(b.dias), fechaONull(b.ultimo_dia), fechaONull(b.fecha_reintegro)])
-            const [fila] = await consultar(conn,
-                'SELECT @dias AS dias, @ultimo AS ultimo_dia, @reintegro AS fecha_reintegro, @saldo AS saldo, @motivos AS motivos, @error AS error')
-            return fila
+            if (!reemplaza) return simularPedido(conn, b, tipo)
+            await conn.beginTransaction()
+            try {
+                await tramoEditable(conn, reemplaza, b.legajo)
+                await conn.query('CALL sp_cancelar_tramo(?, NULL)', [reemplaza])
+                return await simularPedido(conn, b, tipo)
+            } finally {
+                await conn.rollback()
+            }
         })
         res.json({ ...resultado, motivos: resultado.motivos ? resultado.motivos.split(',') : [] })
     } catch (error) {
+        if (reemplaza && error.sqlState === '45000') {
+            return res.json({ dias: null, ultimo_dia: null, fecha_reintegro: null, saldo: null, motivos: [], error: error.sqlMessage })
+        }
         responderError(res, 'No se pudo calcular el pedido')(error)
     }
+}
+
+const simularPedido = async (conn, b, tipo) => {
+    await conn.query(
+        'CALL sp_preparar_pedido(?, ?, ?, ?, ?, ?, ?, @dias, @ultimo, @reintegro, @saldo, @motivos, @error)',
+        [enteroONull(b.legajo), enteroONull(b.periodo), tipo, fechaONull(b.fecha_inicio),
+            enteroONull(b.dias), fechaONull(b.ultimo_dia), fechaONull(b.fecha_reintegro)])
+    const [fila] = await consultar(conn,
+        'SELECT @dias AS dias, @ultimo AS ultimo_dia, @reintegro AS fecha_reintegro, @saldo AS saldo, @motivos AS motivos, @error AS error')
+    return fila
 }
 
 // Registra un tramo con los días calculados por /preparar.
@@ -536,6 +592,44 @@ export const registrarTramo = async (req, res) => {
     }
 }
 
+const errorNegocio = (msg) => Object.assign(new Error(msg), { sqlState: '45000', sqlMessage: msg })
+
+// Bloquea el tramo `id` y verifica que sea del legajo y que el jefe todavía no le haya dado el visto bueno.
+const tramoEditable = async (conn, id, legajo) => {
+    const [tramo] = await consultar(conn,
+        `SELECT t.estado, t.vb_jefe_fecha, d.legajo FROM reg_licencia_anual_rrhh t
+           JOIN licencia_anual_derecho d ON d.id = t.derecho_id
+          WHERE t.id = ? FOR UPDATE`, [id])
+    if (!tramo || Number(tramo.legajo) !== Number(legajo)) throw errorNegocio('Pedido inexistente')
+    if (tramo.estado !== 'pedido' || tramo.vb_jefe_fecha) {
+        throw errorNegocio('Solo se pueden cambiar las fechas antes del visto bueno del jefe')
+    }
+}
+
+// El agente cambia las fechas de un pedido suyo mientras el jefe todavía no le dio el visto bueno.
+// En una transacción: cancela el tramo y registra uno nuevo con los días calculados por /preparar
+// (así saldo y superposición se validan sin contar el tramo viejo). Si el nuevo no es válido se
+// deshace todo y el pedido original queda como estaba.
+// POST /vacaciones/empleado/tramos/:id/modificar   body: { periodo, tipo, fecha_inicio, dias, observacion }
+export const modificarTramoEmpleado = async (req, res) => {
+    const b = req.body ?? {}
+    if (!TIPOS_TRAMO.includes(b.tipo)) return res.status(400).json({ error: 'Tipo de tramo inválido' })
+    try {
+        const resultado = await conUsuario(req, async (conn) => {
+            await tramoEditable(conn, req.params.id, b.legajo)
+            await conn.query('CALL sp_cancelar_tramo(?, ?)', [req.params.id, 'Fechas modificadas por el agente'])
+            await conn.query(
+                'CALL sp_registrar_tramo(?, ?, ?, ?, ?, ?, @id, @reintegro, @estado, @motivos)',
+                [enteroONull(b.legajo), enteroONull(b.periodo), b.tipo, fechaONull(b.fecha_inicio), enteroONull(b.dias), texto(b.observacion)])
+            const [fila] = await consultar(conn, 'SELECT @id AS id, @reintegro AS fecha_reintegro, @estado AS estado, @motivos AS motivos')
+            return fila
+        }, { transaccion: true })
+        res.json({ ...resultado, motivos: resultado.motivos ? resultado.motivos.split(',') : [] })
+    } catch (error) {
+        responderError(res, 'No se pudo modificar el pedido')(error)
+    }
+}
+
 const autorizar = (aprobar) => async (req, res) => {
     if (!usuarioDe(req)) return res.status(401).json({ error: 'Iniciá sesión para autorizar' })
     try {
@@ -546,8 +640,8 @@ const autorizar = (aprobar) => async (req, res) => {
         responderError(res, 'No se pudo procesar la autorización')(error)
     }
 }
+// RRHH solo acepta: el tramo lo rechaza el jefe del área al no dar el visto bueno
 export const aprobarTramo = autorizar(true)
-export const rechazarTramo = autorizar(false)
 
 export const cancelarTramo = async (req, res) => {
     try {
@@ -579,10 +673,11 @@ export const registrarInterrupcion = async (req, res) => {
     }
 }
 
-// body: { validar: true | false }
+// RRHH solo acepta (valida): la interrupción la rechaza el jefe del área al no dar el visto bueno
 export const validarInterrupcion = async (req, res) => {
     if (!usuarioDe(req)) return res.status(401).json({ error: 'Iniciá sesión para validar' })
-    const validar = req.body?.validar !== false
+    if (req.body?.validar === false) return res.status(400).json({ error: 'RRHH no rechaza interrupciones: las rechaza el jefe del área' })
+    const validar = true
     try {
         await conUsuario(req, (conn) => conn.query('CALL sp_validar_interrupcion(?, ?)', [req.params.id, validar ? 1 : 0]),
             { transaccion: true })
@@ -599,18 +694,158 @@ export const validarInterrupcion = async (req, res) => {
 export const getTramosPendientes = async (req, res) => {
     try {
         res.send(await leer(
-            `SELECT p.*, a.apellido FROM v_tramos_pendientes p
-               LEFT JOIN agentes a ON a.legajo = p.legajo ORDER BY p.creado`))
+            `SELECT p.*, a.apellido, j.apellido AS vb_jefe_apellido FROM v_tramos_pendientes p
+               LEFT JOIN agentes a ON a.legajo = p.legajo
+               LEFT JOIN agentes j ON j.legajo = p.vb_jefe_por ORDER BY p.creado`))
     } catch (error) {
         responderError(res, 'No se pudieron obtener los tramos pendientes')(error)
     }
 }
 
+// ---------------------------------------------------------------------
+// Visto bueno del jefe del área (antes de que RRHH autorice)
+// ---------------------------------------------------------------------
+
+// Jefe logueado: legajo del token y su área / rol en agentes (encargado_area S = su área,
+// T = titular, todas las áreas). null si no hay token o no es encargado.
+const jefeDe = async (req) => {
+    const legajo = usuarioDe(req)
+    if (!legajo) return null
+    const [agente] = await leer('SELECT legajo, area, encargado_area FROM agentes WHERE legajo = ?', [legajo])
+    const rol = String(agente?.encargado_area ?? '').trim().toUpperCase()
+    if (rol !== 'S' && rol !== 'T') return null
+    return { legajo: Number(agente.legajo), area: agente.area, rol }
+}
+
+// Pedidos de licencia anual del área del jefe (titular: el área pedida o todas), del año
+// anterior en adelante. El front separa pendientes de visto bueno, con visto bueno y rechazados.
+// GET /vacaciones/jefe/tramos?area=ADMINISTRACION   (Authorization: Bearer <token>)
+export const getTramosJefe = async (req, res) => {
+    try {
+        const jefe = await jefeDe(req)
+        if (!jefe) return res.status(403).json({ error: 'Solo los encargados de área pueden ver estos pedidos' })
+        const pedida = texto(req.query.area, 100)
+        const area = jefe.rol === 'S' ? jefe.area : (pedida && pedida !== 'TODAS' ? pedida : null)
+        await cerrarGozados()
+        res.send(await leer(
+            `SELECT t.id, d.legajo, a.apellido, a.area, d.periodo, t.tipo, t.fecha_inicio, t.dias_computados,
+                    t.fecha_fin_computo, t.fecha_reintegro, t.estado, t.fuera_de_norma, t.motivos_norma,
+                    t.observacion, t.vb_jefe_por, t.vb_jefe_fecha, t.autorizado_por, t.motivo_autoriz, t.creado
+               FROM reg_licencia_anual_rrhh t
+               JOIN licencia_anual_derecho d ON d.id = t.derecho_id
+               JOIN agentes a ON a.legajo = d.legajo
+              WHERE d.periodo >= YEAR(CURDATE()) - 1 AND (? IS NULL OR a.area = ?)
+              ORDER BY t.estado = 'pedido' AND t.vb_jefe_fecha IS NULL DESC, t.creado DESC`,
+            [area, area]))
+    } catch (error) {
+        responderError(res, 'No se pudieron obtener los pedidos de licencia anual')(error)
+    }
+}
+
+// Acciones del jefe sobre un tramo de su área: 'aprobar' (visto bueno), 'rechazar' (body: { motivo },
+// obligatorio) o 'quitar' (saca el visto bueno mientras RRHH no lo autorizó, p. ej. para cambiar fechas).
+const MENSAJES_JEFE = {
+    aprobar: 'Visto bueno registrado',
+    rechazar: 'Pedido rechazado',
+    quitar: 'Visto bueno quitado: el agente ya puede cambiar las fechas',
+}
+const accionJefeTramo = (accion) => async (req, res) => {
+    const motivo = texto(req.body?.motivo)
+    if (accion === 'rechazar' && !motivo) return res.status(400).json({ error: 'Indicá el motivo del rechazo' })
+    try {
+        const jefe = await jefeDe(req)
+        if (!jefe) return res.status(403).json({ error: 'Solo los encargados de área pueden dar el visto bueno' })
+        const [tramo] = await leer(
+            `SELECT d.legajo, a.area FROM reg_licencia_anual_rrhh t
+               JOIN licencia_anual_derecho d ON d.id = t.derecho_id
+               JOIN agentes a ON a.legajo = d.legajo
+              WHERE t.id = ?`, [req.params.id])
+        if (!tramo) return res.status(404).json({ error: 'Tramo inexistente' })
+        if (Number(tramo.legajo) === jefe.legajo) {
+            return res.status(403).json({ error: 'No podés dar el visto bueno a tu propio pedido' })
+        }
+        if (jefe.rol === 'S' && tramo.area !== jefe.area) {
+            return res.status(403).json({ error: 'El pedido no es de un agente de tu área' })
+        }
+        await conUsuario(req, (conn) => (accion === 'quitar'
+            ? conn.query('CALL sp_quitar_visto_bueno_tramo(?)', [req.params.id])
+            : conn.query('CALL sp_visto_bueno_tramo(?, ?, ?)', [req.params.id, accion === 'aprobar' ? 1 : 0, motivo])),
+            { transaccion: true })
+        res.json({ message: MENSAJES_JEFE[accion] })
+    } catch (error) {
+        responderError(res, 'No se pudo registrar el visto bueno')(error)
+    }
+}
+// POST /vacaciones/jefe/tramos/:id/visto-bueno
+export const vistoBuenoTramo = accionJefeTramo('aprobar')
+// POST /vacaciones/jefe/tramos/:id/rechazar
+export const rechazarTramoJefe = accionJefeTramo('rechazar')
+// POST /vacaciones/jefe/tramos/:id/quitar-visto-bueno
+export const quitarVistoBuenoTramo = accionJefeTramo('quitar')
+
+// Interrupciones de licencias del área del jefe (titular: el área pedida o todas), del año
+// anterior en adelante. Primero las que esperan su visto bueno.
+// GET /vacaciones/jefe/interrupciones?area=ADMINISTRACION   (Authorization: Bearer <token>)
+export const getInterrupcionesJefe = async (req, res) => {
+    try {
+        const jefe = await jefeDe(req)
+        if (!jefe) return res.status(403).json({ error: 'Solo los encargados de área pueden ver estas interrupciones' })
+        const pedida = texto(req.query.area, 100)
+        const area = jefe.rol === 'S' ? jefe.area : (pedida && pedida !== 'TODAS' ? pedida : null)
+        res.send(await leer(
+            `SELECT i.id, d.legajo, a.apellido, a.area, d.periodo, i.tramo_id, i.motivo, i.fecha_desde,
+                    i.fecha_hasta, i.dias, i.tipo_referencia, i.nro_referencia, i.estado, i.observacion,
+                    i.vb_jefe_por, i.vb_jefe_fecha, i.motivo_rechazo, i.validado_por, i.fecha_validacion, i.creado
+               FROM licencia_interrupcion i
+               JOIN reg_licencia_anual_rrhh t ON t.id = i.tramo_id
+               JOIN licencia_anual_derecho d ON d.id = t.derecho_id
+               JOIN agentes a ON a.legajo = d.legajo
+              WHERE d.periodo >= YEAR(CURDATE()) - 1 AND (? IS NULL OR a.area = ?)
+              ORDER BY i.estado = 'pendiente' AND i.vb_jefe_fecha IS NULL DESC, i.creado DESC`,
+            [area, area]))
+    } catch (error) {
+        responderError(res, 'No se pudieron obtener las interrupciones')(error)
+    }
+}
+
+// body: { motivo } (obligatorio para rechazar)
+const vistoBuenoInterr = (aprobar) => async (req, res) => {
+    const motivo = texto(req.body?.motivo)
+    if (!aprobar && !motivo) return res.status(400).json({ error: 'Indicá el motivo del rechazo' })
+    try {
+        const jefe = await jefeDe(req)
+        if (!jefe) return res.status(403).json({ error: 'Solo los encargados de área pueden dar el visto bueno' })
+        const [interr] = await leer(
+            `SELECT d.legajo, a.area FROM licencia_interrupcion i
+               JOIN reg_licencia_anual_rrhh t ON t.id = i.tramo_id
+               JOIN licencia_anual_derecho d ON d.id = t.derecho_id
+               JOIN agentes a ON a.legajo = d.legajo
+              WHERE i.id = ?`, [req.params.id])
+        if (!interr) return res.status(404).json({ error: 'Interrupción inexistente' })
+        if (Number(interr.legajo) === jefe.legajo) {
+            return res.status(403).json({ error: 'No podés dar el visto bueno a tu propia interrupción' })
+        }
+        if (jefe.rol === 'S' && interr.area !== jefe.area) {
+            return res.status(403).json({ error: 'La interrupción no es de un agente de tu área' })
+        }
+        await conUsuario(req, (conn) => conn.query('CALL sp_visto_bueno_interrupcion(?, ?, ?)', [req.params.id, aprobar ? 1 : 0, motivo]),
+            { transaccion: true })
+        res.json({ message: aprobar ? 'Visto bueno registrado' : 'Interrupción rechazada' })
+    } catch (error) {
+        responderError(res, 'No se pudo registrar el visto bueno')(error)
+    }
+}
+// POST /vacaciones/jefe/interrupciones/:id/visto-bueno
+export const vistoBuenoInterrupcion = vistoBuenoInterr(true)
+// POST /vacaciones/jefe/interrupciones/:id/rechazar
+export const rechazarInterrupcionJefe = vistoBuenoInterr(false)
+
 export const getInterrupcionesPendientes = async (req, res) => {
     try {
         res.send(await leer(
-            `SELECT p.*, a.apellido FROM v_interrupciones_pendientes p
-               LEFT JOIN agentes a ON a.legajo = p.legajo ORDER BY p.creado`))
+            `SELECT p.*, a.apellido, j.apellido AS vb_jefe_apellido FROM v_interrupciones_pendientes p
+               LEFT JOIN agentes a ON a.legajo = p.legajo
+               LEFT JOIN agentes j ON j.legajo = p.vb_jefe_por ORDER BY p.creado`))
     } catch (error) {
         responderError(res, 'No se pudieron obtener las interrupciones pendientes')(error)
     }

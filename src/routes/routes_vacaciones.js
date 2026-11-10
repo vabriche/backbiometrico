@@ -15,12 +15,12 @@ import {
   getDatosPedido,
   getResumenEmpleado,
   soloEmpleado,
+  inicioDesdeHoy,
   getTramosVacaciones,
   getHistoriaVacaciones,
   prepararPedido,
   registrarTramo,
   aprobarTramo,
-  rechazarTramo,
   cancelarTramo,
   registrarInterrupcion,
   validarInterrupcion,
@@ -31,6 +31,14 @@ import {
   deleteFeriado,
   getEscala,
   modiEscala,
+  modificarTramoEmpleado,
+  getTramosJefe,
+  vistoBuenoTramo,
+  rechazarTramoJefe,
+  quitarVistoBuenoTramo,
+  getInterrupcionesJefe,
+  vistoBuenoInterrupcion,
+  rechazarInterrupcionJefe,
 } from "../controllers/controllers_vacaciones.js";
 
 // Licencia anual ordinaria (vacaciones). Ver sql/licencia_anual_actualizacion.sql.
@@ -38,9 +46,19 @@ const router = Router();
 
 // App del empleado: el legajo sale del token (soloEmpleado pisa cualquier legajo recibido)
 router.get("/empleado/resumen", getResumenEmpleado);
-router.post("/empleado/preparar", soloEmpleado, prepararPedido);
-router.post("/empleado/tramos", soloEmpleado, registrarTramo);
+router.post("/empleado/preparar", soloEmpleado, inicioDesdeHoy(true), prepararPedido);
+router.post("/empleado/tramos", soloEmpleado, inicioDesdeHoy(), registrarTramo);
 router.get("/empleado/tramos", soloEmpleado, getTramosVacaciones);
+router.post("/empleado/tramos/:id/modificar", soloEmpleado, inicioDesdeHoy(), modificarTramoEmpleado);
+
+// Visto bueno del jefe del área (rol y área salen del token)
+router.get("/jefe/tramos", getTramosJefe);
+router.post("/jefe/tramos/:id/visto-bueno", vistoBuenoTramo);
+router.post("/jefe/tramos/:id/rechazar", rechazarTramoJefe);
+router.post("/jefe/tramos/:id/quitar-visto-bueno", quitarVistoBuenoTramo);
+router.get("/jefe/interrupciones", getInterrupcionesJefe);
+router.post("/jefe/interrupciones/:id/visto-bueno", vistoBuenoInterrupcion);
+router.post("/jefe/interrupciones/:id/rechazar", rechazarInterrupcionJefe);
 
 // Bandejas y parámetros (antes que las rutas con :legajo)
 router.get("/agentes", getAgentesVacaciones);
@@ -69,7 +87,6 @@ router.put("/derechos/:id", ajustarDerecho);
 router.post("/preparar", prepararPedido);
 router.post("/tramos", registrarTramo);
 router.post("/tramos/:id/autorizar", aprobarTramo);
-router.post("/tramos/:id/rechazar", rechazarTramo);
 router.post("/tramos/:id/cancelar", cancelarTramo);
 router.post("/tramos/:id/interrupciones", registrarInterrupcion);
 router.post("/interrupciones/:id/validar", validarInterrupcion);

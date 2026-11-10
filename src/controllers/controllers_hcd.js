@@ -172,9 +172,9 @@ export const getCatedraIntegrantes = async (req, res) => {
     let pl = idmat.substring(0, 1)
     let mat = idmat.substring(1, 4)
     try {
-        let sqlstr_1 = 'select cg.inst,cg.ca, cg.legajo,ag.apellido,cg.ppal,cg.nv,plc.cargo, cg.st  from dbasistencia.cargos as cg '
-        let sqlstr_i1 = 'inner join dbasistencia.agentes as ag on ag.legajo=cg.legajo '
-        let sqlstr_i2 = 'inner join dbasistencia.plantacargos_rrhh as plc on CAST(plc.nv AS INT)=CAST(cg.nv AS INT) and plc.ppal =cg.ppal '
+        let sqlstr_1 = 'select cg.inst,cg.ca, cg.legajo,ag.apellido,cg.ppal,cg.nv,plc.cargo, cg.st  from cargos as cg '
+        let sqlstr_i1 = 'inner join agentes as ag on ag.legajo=cg.legajo '
+        let sqlstr_i2 = 'inner join plantacargos_rrhh as plc on CAST(plc.nv AS INT)=CAST(cg.nv AS INT) and plc.ppal =cg.ppal '
         let strqy = ''
         let params = []
         if (tipo === 'C') {

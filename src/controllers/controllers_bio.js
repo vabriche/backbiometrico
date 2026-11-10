@@ -315,8 +315,8 @@ export const getInasistenciasPeriodo = async (req, res) => {
 
     const { fecha_i, fecha_f } = req.params;
 
-    const strqry = `SELECT ina.nleg,a.apellido,DATE_FORMAT(ina.fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(ina.fechfin,"%d-%m-%Y") as fechaf,ina.nres,ina.mot,ina.r,a.condicion FROM dbasistencia.inasist ina
-     inner join dbasistencia.agentes a on a.legajo=ina.nleg 
+    const strqry = `SELECT ina.nleg,a.apellido,DATE_FORMAT(ina.fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(ina.fechfin,"%d-%m-%Y") as fechaf,ina.nres,ina.mot,ina.r,a.condicion FROM inasist ina
+     inner join agentes a on a.legajo=ina.nleg 
      where fechcom BETWEEN CAST(? AS DATE) AND CAST(? AS DATE) order by a.apellido,fechcom,mot`
     try {
         const db = await connect()
@@ -386,8 +386,10 @@ export const getInasistenciasRpEs = async (req, res) => {
 
     const { legajo, fecha_i, fecha_f } = req.params;
 
-    const strqry = `SELECT ina.mot, sum(ina.fechfin-ina.fechcom + 1) as dias FROM dbasistencia.inasist ina
-    inner join dbasistencia.agentes a on a.legajo=ina.nleg  
+    // DATEDIFF y no fechfin - fechcom: restar DATE en MySQL resta los números AAAAMMDD
+    // (30/06 a 02/07 daba 73 días en vez de 3)
+    const strqry = `SELECT ina.mot, sum(DATEDIFF(ina.fechfin, ina.fechcom) + 1) as dias FROM inasist ina
+    inner join agentes a on a.legajo=ina.nleg  
     where fechcom BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)
     and legajo = ? and mot in ('02','04','32')
     group by ina.mot
@@ -431,8 +433,8 @@ export const getLicenciasPeriodo = async (req, res) => {
 
     const { fecha_i, fecha_f } = req.params;
 
-    const strqry = `SELECT lic.nleg,a.apellido,DATE_FORMAT(lic.fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(lic.fechfin,"%d-%m-%Y") as fechaf,lic.nres,lic.mot,lic.r,a.condicion,lic.nc FROM dbasistencia.licencia lic 
-    inner join dbasistencia.agentes a on a.legajo=lic.nleg
+    const strqry = `SELECT lic.nleg,a.apellido,DATE_FORMAT(lic.fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(lic.fechfin,"%d-%m-%Y") as fechaf,lic.nres,lic.mot,lic.r,a.condicion,lic.nc FROM licencia lic 
+    inner join agentes a on a.legajo=lic.nleg
     where fechcom BETWEEN CAST(? AS DATE) AND CAST(? AS DATE) order by a.apellido,fechcom,mot
     ` //modificado
     try {
@@ -452,8 +454,8 @@ export const getLicenciasHistoricas = async (req, res) => {
 
     const { leg } = req.params;
 
-    let strqry = `SELECT lic.nleg,a.apellido,DATE_FORMAT(lic.fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(lic.fechfin,"%d-%m-%Y") as fechaf,lic.nres,lic.mot,lic.r,a.condicion,lic.nc FROM dbasistencia.licencia lic 
-    inner join dbasistencia.agentes a on a.legajo=lic.nleg
+    let strqry = `SELECT lic.nleg,a.apellido,DATE_FORMAT(lic.fechcom,"%d-%m-%Y") as fechai,DATE_FORMAT(lic.fechfin,"%d-%m-%Y") as fechaf,lic.nres,lic.mot,lic.r,a.condicion,lic.nc FROM licencia lic 
+    inner join agentes a on a.legajo=lic.nleg
     where lic.nleg=${leg} order by fechcom,mot
     ` 
     try {
@@ -486,8 +488,8 @@ export const getLicenciasHistoricas = async (req, res) => {
              lic.nreslim,
              lic.observaciones, 
             lic.nc
-        FROM dbasistencia.licencia lic 
-        INNER JOIN dbasistencia.agentes a ON a.legajo = lic.nleg 
+        FROM licencia lic 
+        INNER JOIN agentes a ON a.legajo = lic.nleg 
         WHERE lic.nleg = ? 
         ORDER BY lic.fechcom, lic.mot
     `;
@@ -517,8 +519,8 @@ export const getLicenciasHistoricas = async (req, res) => {
 
 export const getLicenciaAgenteM = async (req, res) => {
     const { legajo, nc, ncg } = req.params
-    const sqlstr = `select l.nleg,l.mot,mt.Motivo  from dbasistencia.licencia l
-    inner join dbasistencia.motina mt on mt.codina = CAST (l.mot as Integer)
+    const sqlstr = `select l.nleg,l.mot,mt.Motivo  from licencia l
+    inner join motina mt on mt.codina = CAST (l.mot as Integer)
     where nleg = ? and nc = ? and ncg = ?`
     try {
         const db = await connect()
@@ -806,13 +808,13 @@ export const getEstadistasHorasND = async (req, res) => {
     try {
 
         if (condi == 1) {
-            tabla = 'dbasistencia.registroasistenciad'
+            tabla = 'registroasistenciad'
         } else {
-            tabla = 'dbasistencia.registroasistenciand'
+            tabla = 'registroasistenciand'
         }
         const db = await connect()
 
-        let strqry = `SELECT age.legajo,age.apellido,age.condicion,age.area,  count(asis.cantidadHoras) as dias ,round(sum(asis.cantidadHoras),2) as total,round(avg(asis.cantidadHoras),2) as media  FROM dbasistencia.agentes as age  
+        let strqry = `SELECT age.legajo,age.apellido,age.condicion,age.area,  count(asis.cantidadHoras) as dias ,round(sum(asis.cantidadHoras),2) as total,round(avg(asis.cantidadHoras),2) as media  FROM agentes as age  
         INNER JOIN ${tabla} as asis ON asis.legajo = age.legajo
         WHERE age.condicion = ? AND asis.fecha >= ? AND asis.fecha <= ?
         GROUP BY age.legajo,age.apellido
@@ -832,8 +834,8 @@ export const getEstadistasHorasND = async (req, res) => {
 export const getEstadistasHorasD = async (req, res) => {
     const { condi, fecha_i, fecha_f } = req.params
     try {
-        let strqry = `SELECT age.legajo,age.apellido,age.condicion,age.area,  count(asis.cantidadHoras) as dias ,round(sum(asis.cantidadHoras),2) as total, round(avg(asis.cantidadHoras),2) as media  FROM dbasistencia.agentes as age  
-        INNER JOIN dbasistencia.registroasistenciad as asis ON asis.legajo = age.legajo
+        let strqry = `SELECT age.legajo,age.apellido,age.condicion,age.area,  count(asis.cantidadHoras) as dias ,round(sum(asis.cantidadHoras),2) as total, round(avg(asis.cantidadHoras),2) as media  FROM agentes as age  
+        INNER JOIN registroasistenciad as asis ON asis.legajo = age.legajo
         WHERE age.condicion = ? AND asis.fecha >= ? AND asis.fecha <= ?
         GROUP BY age.legajo,age.apellido
         ORDER BY media DESC`
@@ -854,7 +856,7 @@ export const getEstadistasHorasD = async (req, res) => {
 //cantidad de horas en un dia docentes o no docentes
 const cantihorasclaustrodia = async (fecha, claustro) => {
     let tabla = ''
-    tabla = claustro === '1' ? 'dbasistencia.registroasistenciad' : 'dbasistencia.registroasistenciand'
+    tabla = claustro === '1' ? 'registroasistenciad' : 'registroasistenciand'
     try {
         const sqlstr = `select sum(cantidadHoras) as tot from ${tabla}
         where fecha = ?`
@@ -873,7 +875,7 @@ const cantihorasclaustrodia = async (fecha, claustro) => {
 
 const cantidadpersonasmarca = async (fecha, claustro) => {
     let tabla = ''
-    tabla = claustro === '1' ? 'dbasistencia.registroasistenciad' : 'dbasistencia.registroasistenciand'
+    tabla = claustro === '1' ? 'registroasistenciad' : 'registroasistenciand'
     try {
         const sqlstr = `select distinct legajo from ${tabla}
         where fecha = ?`
@@ -1103,7 +1105,7 @@ const setPresentes = (datos) => {
 
 const setAusenteAgente = async () => {
 
-    let sqlu = "update dbasistencia.agentes set asistencia='A' where condicion=2 and not asistencia in ('L','O','V')"
+    let sqlu = "update agentes set asistencia='A' where condicion=2 and not asistencia in ('L','O','V')"
 
     try {
         const db = await connect()
@@ -1115,9 +1117,9 @@ const setAusenteAgente = async () => {
 }
 const buscarAsistenteFecha = async (fecha) => {
 
-    const sqlstr = `update dbasistencia.agentes set asistencia='P' where condicion=2 and legajo in (
-        select DISTINCT age.legajo from dbasistencia.agentes age 
-        inner join dbasistencia.registroasistenciand ran on ran.legajo=age.legajo
+    const sqlstr = `update agentes set asistencia='P' where condicion=2 and legajo in (
+        select DISTINCT age.legajo from agentes age 
+        inner join registroasistenciand ran on ran.legajo=age.legajo
         where age.condicion=2 and asistencia='A' and fecha = ?)
     `
 
@@ -1134,7 +1136,7 @@ const buscarAsistenteFecha = async (fecha) => {
 export const buscarAusentes = async (req, res) => {
     const { fecha } = req.params
 
-    let sqlstr = "SELECT legajo,apellido,area,asistencia FROM dbasistencia.agentes WHERE condicion='2' AND asistencia in ('A','L') order by apellido  "
+    let sqlstr = "SELECT legajo,apellido,area,asistencia FROM agentes WHERE condicion='2' AND asistencia in ('A','L') order by apellido  "
 
     try {
         await setAusenteAgente()
@@ -1154,7 +1156,7 @@ export const buscarAusentes = async (req, res) => {
 
 //cantidad de agentes docentes presencial
 const cantiMarcaDocPre = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciad
+    const sqlstr = `select distinct legajo from registroasistenciad
     where fecha = ? and virtual='P'`
     try {
         const db = await connect()
@@ -1168,7 +1170,7 @@ const cantiMarcaDocPre = async (fecha) => {
 
 //cantidad de agentes docentes virtuales
 const cantiMarcaDocVirt = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciad
+    const sqlstr = `select distinct legajo from registroasistenciad
     where fecha = ? and virtual='V'`
     try {
         const db = await connect()
@@ -1181,7 +1183,7 @@ const cantiMarcaDocVirt = async (fecha) => {
 
 //solo aquellos presentes presenciales 
 const cantiMarcaDocPPresentes = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciad
+    const sqlstr = `select distinct legajo from registroasistenciad
     where fecha = ? and Hsalida='X' and virtual='P'`
     try {
         const db = await connect()
@@ -1194,7 +1196,7 @@ const cantiMarcaDocPPresentes = async (fecha) => {
 
 //solo aquellos docentes presentes virtuales
 const cantiMarcaDocVPresentes = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciad
+    const sqlstr = `select distinct legajo from registroasistenciad
     where fecha = ? and Hsalida='X' and virtual='V'`
     try {
         const db = await connect()
@@ -1210,7 +1212,7 @@ const cantiMarcaDocVPresentes = async (fecha) => {
 
 //asistencia presencial no docentes
 const cantiMarcaNoDocPre = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciand
+    const sqlstr = `select distinct legajo from registroasistenciand
     where fecha = ? and virtual='P'`
     try {
         const db = await connect()
@@ -1223,7 +1225,7 @@ const cantiMarcaNoDocPre = async (fecha) => {
 
 //asistencia virtual no docentes
 const cantiMarcaNoDocVirt = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciand
+    const sqlstr = `select distinct legajo from registroasistenciand
     where fecha = ? and virtual='V'`
     try {
         const db = await connect()
@@ -1237,7 +1239,7 @@ const cantiMarcaNoDocVirt = async (fecha) => {
 
 //no docentes presentes presencial
 const cantiMarcaNoDocPPresentes = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciand
+    const sqlstr = `select distinct legajo from registroasistenciand
     where fecha = ? and Hsalida='X' and virtual='P'`
     try {
         const db = await connect()
@@ -1251,7 +1253,7 @@ const cantiMarcaNoDocPPresentes = async (fecha) => {
 
 //no docentes presentes viruales
 const cantiMarcaNoDocVPresentes = async (fecha) => {
-    const sqlstr = `select distinct legajo from dbasistencia.registroasistenciand
+    const sqlstr = `select distinct legajo from registroasistenciand
     where fecha = ? and Hsalida='X' and virtual='V'`
     try {
         const db = await connect()
@@ -1508,7 +1510,7 @@ export const getAlertaSalida = async (req, res) => {
 
     // Obtener la condición del agente (1: Docente, 2: No Docente / Apoyo)
     const [agenteRows] = await db.query(
-      'SELECT condicion FROM dbasistencia.agentes WHERE legajo = ?',
+      'SELECT condicion FROM agentes WHERE legajo = ?',
       [legajo]
     );
 
@@ -1526,7 +1528,7 @@ export const getAlertaSalida = async (req, res) => {
               DATE_FORMAT(fecha, '%Y-%m-%d') as fecha_iso,
               Hentrada,
               Hsalida
-       FROM dbasistencia.${tabla}
+       FROM ${tabla}
        WHERE legajo = ? AND fecha < CURDATE()
        ORDER BY fecha DESC, nroregistro DESC
        LIMIT 1`,
@@ -1560,30 +1562,42 @@ export const getAlertaSalida = async (req, res) => {
 
 
 // ==========================================
-// ASISTENCIA VIRTUAL (PERÍODO DE VACACIONES: 21 DIC - 1 FEB)
+// ASISTENCIA VIRTUAL (RECESO DE VACACIONES)
 // ==========================================
 
-export const esPeriodoRecesoVacaciones = (fecha = new Date()) => {
-  const mes = fecha.getMonth(); // 0 = Ene, 1 = Feb, ..., 11 = Dic
-  const dia = fecha.getDate();
-  // 21 de Diciembre al 31 de Diciembre
-  if (mes === 11 && dia >= 21) return true;
-  // Todo Enero (1 al 31)
-  if (mes === 0) return true;
-  // 1 de Febrero
-  if (mes === 1 && dia <= 1) return true;
-  return false;
+// Ventana de marcación virtual del periodo de vacaciones vigente o del próximo (periodo_vacaciones):
+// desde ventana_desde hasta el día anterior a reintegro_general (ese día ya es presencial).
+// Con la fecha de la base, no la del servidor de Node. Sin periodos cargados: inactiva y sin fechas.
+export const periodoAsistenciaVirtual = async (db) => {
+  const [rows] = await db.query(
+    `SELECT periodo,
+            DATE_FORMAT(ventana_desde, '%Y-%m-%d') AS desde,
+            DATE_FORMAT(reintegro_general - INTERVAL 1 DAY, '%Y-%m-%d') AS hasta,
+            DATE_FORMAT(reintegro_general, '%Y-%m-%d') AS reintegro,
+            CURDATE() >= ventana_desde AND CURDATE() < reintegro_general AS activo
+       FROM periodo_vacaciones
+      WHERE reintegro_general > CURDATE()
+      ORDER BY ventana_desde
+      LIMIT 1`
+  );
+  const p = rows[0];
+  return p
+    ? { activo: Boolean(p.activo), periodo: p.periodo, desde: p.desde, hasta: p.hasta, reintegro: p.reintegro }
+    : { activo: false, periodo: null, desde: null, hasta: null, reintegro: null };
 };
+
+const ddmm = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
 
 export const getEstadoAsistenciaVirtual = async (req, res) => {
   const { legajo } = req.params;
-  const esPeriodoReal = esPeriodoRecesoVacaciones(new Date());
-  const esHabilitado = esPeriodoReal || process.env.ALLOW_VIRTUAL_TEST === 'true';
 
   try {
     const db = await connect();
+    const periodoVirtual = await periodoAsistenciaVirtual(db);
+    const esPeriodoReal = periodoVirtual.activo;
+    const esHabilitado = esPeriodoReal || process.env.ALLOW_VIRTUAL_TEST === 'true';
     const [agenteRows] = await db.query(
-      'SELECT legajo, apellido, condicion FROM dbasistencia.agentes WHERE legajo = ?',
+      'SELECT legajo, apellido, condicion FROM agentes WHERE legajo = ?',
       [legajo]
     );
 
@@ -1601,7 +1615,7 @@ export const getEstadoAsistenciaVirtual = async (req, res) => {
               Hentrada, Hsalida,
               ROUND(cantidadHoras, 2) as cantidadHoras,
               virtual
-       FROM dbasistencia.${tabla}
+       FROM ${tabla}
        WHERE legajo = ? AND fecha = CURDATE()
        ORDER BY nroregistro ASC`,
       [legajo]
@@ -1635,6 +1649,7 @@ export const getEstadoAsistenciaVirtual = async (req, res) => {
     res.json({
       esPeriodoHabilitado: esHabilitado,
       esPeriodoReal,
+      periodoVirtual,
       fechaHoy,
       horaActual,
       estado,
@@ -1656,19 +1671,21 @@ export const marcarAsistenciaVirtual = async (req, res) => {
     return res.status(400).json({ error: 'El legajo es requerido' });
   }
 
-  const esPeriodoReal = esPeriodoRecesoVacaciones(new Date());
-  const esHabilitado = esPeriodoReal || process.env.ALLOW_VIRTUAL_TEST === 'true';
-
-  if (!esHabilitado) {
-    return res.status(403).json({
-      error: 'La asistencia virtual solo está habilitada durante el período de vacaciones (del 21 de diciembre al 1 de febrero).'
-    });
-  }
-
   try {
     const db = await connect();
+    const periodoVirtual = await periodoAsistenciaVirtual(db);
+    const esHabilitado = periodoVirtual.activo || process.env.ALLOW_VIRTUAL_TEST === 'true';
+
+    if (!esHabilitado) {
+      return res.status(403).json({
+        error: periodoVirtual.desde
+          ? `La asistencia virtual solo está habilitada durante el receso de vacaciones (del ${ddmm(periodoVirtual.desde)} al ${ddmm(periodoVirtual.hasta)}).`
+          : 'La asistencia virtual solo está habilitada durante el receso de vacaciones, y todavía no hay un periodo de vacaciones cargado.'
+      });
+    }
+
     const [agenteRows] = await db.query(
-      'SELECT legajo, apellido, condicion FROM dbasistencia.agentes WHERE legajo = ?',
+      'SELECT legajo, apellido, condicion FROM agentes WHERE legajo = ?',
       [legajo]
     );
 
@@ -1683,7 +1700,7 @@ export const marcarAsistenciaVirtual = async (req, res) => {
       `SELECT nroregistro, legajo,
               DATE_FORMAT(fecha, '%Y-%m-%d') as fecha,
               Hentrada, Hsalida
-       FROM dbasistencia.${tabla}
+       FROM ${tabla}
        WHERE legajo = ? AND fecha = CURDATE()
        ORDER BY nroregistro DESC
        LIMIT 1`,
@@ -1718,7 +1735,7 @@ export const marcarAsistenciaVirtual = async (req, res) => {
         const cantidadHoras = Math.round((diffMin / 60) * 100) / 100;
 
         await db.query(
-          `UPDATE dbasistencia.${tabla}
+          `UPDATE ${tabla}
            SET Hsalida = ?, cantidadHoras = ?, virtual = 'V'
            WHERE nroregistro = ? AND legajo = ?`,
           [horaActual, cantidadHoras, ultimo.nroregistro, legajo]
@@ -1737,7 +1754,7 @@ export const marcarAsistenciaVirtual = async (req, res) => {
 
     // MARCAR ENTRADA (nuevo turno/registro del día)
     const [insertResult] = await db.query(
-      `INSERT INTO dbasistencia.${tabla} (legajo, fecha, Hentrada, Hsalida, cantidadHoras, virtual)
+      `INSERT INTO ${tabla} (legajo, fecha, Hentrada, Hsalida, cantidadHoras, virtual)
        VALUES (?, CURDATE(), ?, NULL, NULL, 'V')`,
       [legajo, horaActual]
     );
