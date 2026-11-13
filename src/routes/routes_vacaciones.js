@@ -15,7 +15,7 @@ import {
   getDatosPedido,
   getResumenEmpleado,
   soloEmpleado,
-  inicioDesdeHoy,
+  observacionSiNoEsLunes,
   getTramosVacaciones,
   getHistoriaVacaciones,
   prepararPedido,
@@ -46,10 +46,10 @@ const router = Router();
 
 // App del empleado: el legajo sale del token (soloEmpleado pisa cualquier legajo recibido)
 router.get("/empleado/resumen", getResumenEmpleado);
-router.post("/empleado/preparar", soloEmpleado, inicioDesdeHoy(true), prepararPedido);
-router.post("/empleado/tramos", soloEmpleado, inicioDesdeHoy(), registrarTramo);
+router.post("/empleado/preparar", soloEmpleado, prepararPedido);
+router.post("/empleado/tramos", soloEmpleado, observacionSiNoEsLunes, registrarTramo);
 router.get("/empleado/tramos", soloEmpleado, getTramosVacaciones);
-router.post("/empleado/tramos/:id/modificar", soloEmpleado, inicioDesdeHoy(), modificarTramoEmpleado);
+router.post("/empleado/tramos/:id/modificar", soloEmpleado, observacionSiNoEsLunes, modificarTramoEmpleado);
 
 // Visto bueno del jefe del área (rol y área salen del token)
 router.get("/jefe/tramos", getTramosJefe);

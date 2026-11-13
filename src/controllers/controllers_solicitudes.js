@@ -347,7 +347,6 @@ export const crearSolicitudJustificacion = async (req, res) => {
             observacion,
             fecha_inicio,
             fecha_fin,
-            cantidad_dias,
         } = req.body;
 
         if (!legajo || !codina || !tipo || !comunico) {
@@ -373,19 +372,19 @@ export const crearSolicitudJustificacion = async (req, res) => {
 
         const db = await connect();
 
-        // No se puede pedir con fecha anterior al día del pedido (se compara con la fecha de la base)
-        const [[{ anterior }]] = await db.query('SELECT ? < CURDATE() AS anterior', [fecha_inicio]);
-        if (anterior) {
-            return res.status(400).json({ error: 'La fecha de inicio no puede ser anterior a la fecha del pedido' });
-        }
-
         await asegurarColumnasSolicitud(db);
 
-        // Calcular cantidad de días si no viene
+        // Cantidad de días hábiles del período (sin sábados ni domingos). Se calcula siempre acá,
+        // no se toma la del cliente, porque con ella se controlan los cupos.
         const d1 = new Date(fecha_inicio + 'T00:00:00');
         const d2 = new Date(fechaFinal + 'T00:00:00');
-        const diffDias = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-        const cantDiasCalculada = cantidad_dias ? Number(cantidad_dias) : Math.max(1, diffDias);
+        let cantDiasCalculada = 0;
+        for (const d = new Date(d1); d <= d2; d.setDate(d.getDate() + 1)) {
+            if (d.getDay() !== 0 && d.getDay() !== 6) cantDiasCalculada++;
+        }
+        if (cantDiasCalculada === 0) {
+            return res.status(400).json({ error: 'El período elegido no incluye días hábiles (solo sábado y/o domingo)' });
+        }
 
         // Obtener descripción del motivo para validar cupos y límites legales
         const [motivoRows] = await db.query(

@@ -409,20 +409,24 @@ proc: BEGIN
   END IF;
 
   -- Advertencias (no impiden el pedido; requieren observación y autorización)
-  IF NOT fn_es_habil(p_inicio) THEN
-    SET p_motivos = CONCAT_WS(',', p_motivos, 'INICIO_NO_HABIL');
-  END IF;
   IF p_inicio > v_venc THEN
     SET p_motivos = CONCAT_WS(',', p_motivos, 'POST_VENCIMIENTO');
   END IF;
-  IF p_inicio < v_ventana THEN
-    SET p_motivos = CONCAT_WS(',', p_motivos, 'INICIO_ANTES_VENTANA');
-  END IF;
-  IF p_reintegro > v_reint_gral THEN
-    SET p_motivos = CONCAT_WS(',', p_motivos, 'REINTEGRO_POSTERIOR');
-  END IF;
-  IF p_tipo = 'principal' AND p_dias < v_corr THEN
-    SET p_motivos = CONCAT_WS(',', p_motivos, 'PARCIAL');
+  -- Día hábil, ventana, reintegro general y días completos son reglas del tramo principal:
+  -- el saldo se puede tomar cualquier día y fraccionado
+  IF p_tipo = 'principal' THEN
+    IF NOT fn_es_habil(p_inicio) THEN
+      SET p_motivos = CONCAT_WS(',', p_motivos, 'INICIO_NO_HABIL');
+    END IF;
+    IF p_inicio < v_ventana THEN
+      SET p_motivos = CONCAT_WS(',', p_motivos, 'INICIO_ANTES_VENTANA');
+    END IF;
+    IF p_reintegro > v_reint_gral THEN
+      SET p_motivos = CONCAT_WS(',', p_motivos, 'REINTEGRO_POSTERIOR');
+    END IF;
+    IF p_dias < v_corr THEN
+      SET p_motivos = CONCAT_WS(',', p_motivos, 'PARCIAL');
+    END IF;
   END IF;
   -- La compensación y el resto que se pide después de una siempre se autorizan
   IF p_tipo = 'compensacion' THEN

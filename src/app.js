@@ -17,7 +17,7 @@ import routes_solicitudes from './routes/routes_solicitudes.js'
 import routes_partesMedicos from './routes/routes_partesMedicos.js'
 import routes_vacaciones from './routes/routes_vacaciones.js'
 import { verifyTokenWrites } from './midlewares/auth.js';
-import { getAgenteLogin, getAgenteFirebaseLogin } from './controllers/controllers_bio.js';
+import { getAgenteLogin, getAgenteFirebaseLogin, resetPassAgente } from './controllers/controllers_bio.js';
 
 const app = express();
 app.set('port',process.env.PORTSERVER || 4000 );
@@ -49,6 +49,8 @@ app.use('/uploads', express.static(path.resolve(__dirname, '..', 'uploads')));
 //ruta publica de login
 app.post('/biometrico/login', getAgenteLogin);
 app.post('/biometrico/login-firebase', getAgenteFirebaseLogin);
+// restablecer clave: se usa antes de iniciar sesión, no hay token todavía
+app.post('/biometrico/resetpass', resetPassAgente);
 
 //a partir de aca, las rutas de escritura (POST/PUT/PATCH/DELETE) exigen JWT; los GET quedan libres
 

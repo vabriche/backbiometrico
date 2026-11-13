@@ -415,23 +415,17 @@ export const soloEmpleado = (req, res, next) => {
     next()
 }
 
-// App del empleado: la licencia no puede empezar antes del día del pedido (fecha de la base).
-// Solo en las rutas /empleado: RRHH puede seguir cargando tramos con fecha pasada.
-// `enCuerpo`: /preparar devuelve el error en el cuerpo (como sus otros errores de validación).
-const MENSAJE_INICIO_ANTERIOR = 'La fecha de inicio no puede ser anterior a la fecha del pedido'
-export const inicioDesdeHoy = (enCuerpo = false) => async (req, res, next) => {
+
+// App del empleado: el tramo principal debería empezar un lunes; si no, la observación es
+// obligatoria. Saldo y compensación se pueden tomar cualquier día.
+export const observacionSiNoEsLunes = (req, res, next) => {
+    if (req.body?.tipo !== 'principal') return next()
     const inicio = fechaONull(req.body?.fecha_inicio)
-    if (!inicio) return next()
-    try {
-        const [[{ anterior }]] = await (await connect()).query('SELECT ? < CURDATE() AS anterior', [inicio])
-        if (!anterior) return next()
-        if (enCuerpo) {
-            return res.json({ dias: null, ultimo_dia: null, fecha_reintegro: null, saldo: null, motivos: [], error: MENSAJE_INICIO_ANTERIOR })
-        }
-        res.status(422).json({ error: MENSAJE_INICIO_ANTERIOR })
-    } catch (error) {
-        responderError(res, 'No se pudo validar la fecha de inicio')(error)
+    const esLunes = inicio && new Date(`${inicio}T00:00:00`).getDay() === 1
+    if (inicio && !esLunes && !String(req.body?.observacion ?? '').trim()) {
+        return res.status(422).json({ error: 'El tramo principal no empieza un lunes: la observación es obligatoria' })
     }
+    next()
 }
 
 // Resumen para la app del empleado: el legajo sale del token (cada uno ve solo lo suyo).
