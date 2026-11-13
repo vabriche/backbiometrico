@@ -15,7 +15,6 @@ const REFERENCIAS = ['inasistencia', 'parte_medico', 'asistencia', 'otro']
 // Mensajes para las restricciones CHECK de la base
 const RESTRICCIONES = {
     chk_interr_enf: 'Para una enfermedad es obligatorio el número de inasistencia o de parte médico',
-    chk_tramo_obs: 'El tramo está fuera de norma: la observación es obligatoria',
     chk_escala_dias: 'Los días de la escala deben ser 20, 25, 30, 35, 40 o 45',
     chk_escala_rango: 'En la escala, "hasta" debe ser mayor que "desde"',
     chk_periodo_fechas: 'Las fechas del periodo deben cumplir: inicio habitual < reintegro general < vencimiento',
@@ -415,18 +414,6 @@ export const soloEmpleado = (req, res, next) => {
     next()
 }
 
-
-// App del empleado: el tramo principal debería empezar un lunes; si no, la observación es
-// obligatoria. Saldo y compensación se pueden tomar cualquier día.
-export const observacionSiNoEsLunes = (req, res, next) => {
-    if (req.body?.tipo !== 'principal') return next()
-    const inicio = fechaONull(req.body?.fecha_inicio)
-    const esLunes = inicio && new Date(`${inicio}T00:00:00`).getDay() === 1
-    if (inicio && !esLunes && !String(req.body?.observacion ?? '').trim()) {
-        return res.status(422).json({ error: 'El tramo principal no empieza un lunes: la observación es obligatoria' })
-    }
-    next()
-}
 
 // Resumen para la app del empleado: el legajo sale del token (cada uno ve solo lo suyo).
 // - antigüedad: ingreso, reconocimiento cargado (a/m/d al fecha), propia desde el ingreso y total

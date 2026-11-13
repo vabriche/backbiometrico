@@ -552,10 +552,8 @@ BEGIN
   IF v_error IS NOT NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_error;
   END IF;
-  IF p_motivos IS NOT NULL AND (p_observacion IS NULL OR TRIM(p_observacion) = '') THEN
-    SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'El tramo está fuera de norma: la observación es obligatoria';
-  END IF;
+  -- Las advertencias (p_motivos) no impiden el pedido ni exigen observación: quedan
+  -- registradas en fuera_de_norma / motivos_norma para que las vea quien autoriza.
 
   SELECT id INTO v_derecho FROM licencia_anual_derecho
    WHERE legajo = p_legajo AND periodo = p_periodo;

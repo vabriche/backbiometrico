@@ -1,7 +1,12 @@
 -- Saldo y compensación: se pueden tomar cualquier día y fraccionados.
 -- Las advertencias INICIO_NO_HABIL, INICIO_ANTES_VENTANA, REINTEGRO_POSTERIOR y PARCIAL
--- pasan a aplicarse solo al tramo principal. Solo recrea sp_simular_tramo (no toca datos).
+-- pasan a aplicarse solo al tramo principal, y ninguna advertencia exige observación ni
+-- impide grabar (solo se controla la cantidad de días contra el saldo).
+-- Quita la restricción chk_tramo_obs y recrea sp_simular_tramo y sp_registrar_tramo (no toca datos).
 -- Ejecutar: mysql -u USUARIO -p BASE < sql/licencia_anual_motivos_solo_principal.sql
+
+-- La tabla tenía además una restricción CHECK que exigía observación en los tramos fuera de norma
+ALTER TABLE reg_licencia_anual_rrhh DROP CONSTRAINT IF EXISTS chk_tramo_obs;
 
 DELIMITER //
 
@@ -97,6 +102,52 @@ proc: BEGIN
                                          AND t.estado IN ('pedido','aprobado','gozado')) THEN
     SET p_motivos = CONCAT_WS(',', p_motivos, 'POST_COMPENSACION');
   END IF;
+END//
+
+
+-- Registra un tramo. Si no tiene advertencias queda 'aprobado';
+-- si tiene, queda 'pedido' hasta que se autorice (sp_autorizar_tramo).
+-- Llamar dentro de una transacción: bloquea los derechos de la persona para que dos
+-- pedidos simultáneos no se pasen del saldo ni se superpongan.
+CREATE OR REPLACE PROCEDURE sp_registrar_tramo(
+  IN  p_legajo INT, IN p_periodo SMALLINT, IN p_tipo VARCHAR(20),
+  IN  p_inicio DATE, IN p_dias SMALLINT, IN p_observacion VARCHAR(255),
+  OUT p_tramo_id INT UNSIGNED, OUT p_reintegro DATE,
+  OUT p_estado VARCHAR(20), OUT p_motivos VARCHAR(255))
+BEGIN
+  DECLARE v_saldo SMALLINT;
+  DECLARE v_error VARCHAR(255);
+  DECLARE v_derecho INT UNSIGNED;
+  DECLARE v_bloqueados INT;
+
+  IF p_tipo IS NULL OR p_tipo NOT IN ('principal','saldo','compensacion') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Tipo de tramo inválido';
+  END IF;
+
+  SELECT COUNT(*) INTO v_bloqueados FROM licencia_anual_derecho WHERE legajo = p_legajo FOR UPDATE;
+
+  CALL sp_simular_tramo(p_legajo, p_periodo, p_tipo, p_inicio, p_dias,
+                        p_reintegro, v_saldo, p_motivos, v_error);
+  IF v_error IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_error;
+  END IF;
+  -- Las advertencias (p_motivos) no impiden el pedido ni exigen observación: quedan
+  -- registradas en fuera_de_norma / motivos_norma para que las vea quien autoriza.
+
+  SELECT id INTO v_derecho FROM licencia_anual_derecho
+   WHERE legajo = p_legajo AND periodo = p_periodo;
+
+  -- Todo tramo nace como pedido (aun el principal y dentro de norma): lo aprueba RRHH con sp_autorizar_tramo.
+  SET p_estado = 'pedido';
+
+  INSERT INTO reg_licencia_anual_rrhh
+    (derecho_id, tipo, fecha_inicio, dias_computados, fecha_reintegro, estado,
+     fuera_de_norma, motivos_norma, observacion, creado_por, modificado_por)
+  VALUES
+    (v_derecho, p_tipo, p_inicio, p_dias, p_reintegro, p_estado,
+     p_motivos IS NOT NULL, p_motivos, NULLIF(TRIM(p_observacion), ''), @app_usuario, @app_usuario);
+
+  SET p_tramo_id = LAST_INSERT_ID();
 END//
 
 DELIMITER ;
